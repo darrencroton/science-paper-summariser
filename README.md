@@ -45,6 +45,11 @@ science-paper-summariser/
    mkdir -p input output processed logs
    ```
 
+4. Make the start and stop scripts executable:
+   ```bash
+   chmod +x start_claude_summariser.sh stop_claude_summariser.sh
+   ```
+
 ## Usage
 
 1. Start the summariser:
