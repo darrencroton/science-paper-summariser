@@ -59,7 +59,7 @@ science-paper-summariser/
 
 2. Place PDF or text files in the `input/` directory
 
-3. Monitor `output/` for generated summaries
+3. Monitor `output/` for generated summaries. Processed papers end up in `processed/`
 
 4. Stop the summariser:
    ```bash
