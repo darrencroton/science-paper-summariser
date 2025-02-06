@@ -53,5 +53,5 @@ A table here, 2 columns titled Term and Definition
 ## References
 
 [^1]: "quote from paper" (Abstract, p.1)
-[^2]: "another quote" (Section 2.3, p.3)
+[^2]: "another quote” (Section 2.3, p.3)
 etc
