@@ -68,6 +68,7 @@ science-paper-summariser/
 
 ## Requirements
 
+- zsh shell
 - Python 3.8+
 - Anthropic API key
 - PyPDF2
