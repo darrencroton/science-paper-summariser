@@ -42,7 +42,7 @@ science-paper-summariser/
 
 3. Create required directories:
    ```bash
-   mkdir -p input output processed logs project_knowledge
+   mkdir -p input output processed logs
    ```
 
 ## Usage
