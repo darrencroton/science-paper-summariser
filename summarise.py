@@ -88,14 +88,14 @@ def read_input_file(file_path):
 def validate_input_length(paper_text):
     """Validate input length and log warnings"""
     token_estimate = len(paper_text.split())
-    if token_estimate > 12000:
+    if token_estimate > 65536:
         log_message(f"WARNING: Paper length ({token_estimate} tokens) may be too long for effective summarization")
     return token_estimate
 
 def get_max_tokens(paper_text):
     """Calculate appropriate max_tokens based on input length"""
-    estimated_tokens = len(paper_text.split()) * 0.75 + 1000  # 1000 token overhead for formatting
-    return min(8192, int(estimated_tokens))  # Cap at Sonnet's maximum of 8192
+    estimated_tokens = len(paper_text.split()) * 0.8 + 1000  # 1000 token overhead for formatting
+    return min(65536, int(estimated_tokens))  # Cap at Sonnet's maximum
 
 def move_to_done(file_path, summary_content):
     """Move processed file to done directory with metadata-based name"""
