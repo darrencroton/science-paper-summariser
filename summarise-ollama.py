@@ -6,8 +6,12 @@ import requests
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader
 from pathlib import Path
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
+from marker.config.parser import ConfigParser
+
 
 # Load environment variables
 load_dotenv()
@@ -68,21 +72,44 @@ def read_project_knowledge():
         logging.error(f"Failed to read project knowledge files: {str(e)}")
         raise
 
-def read_input_file(file_path):
-    """Read content from either PDF or text file with better error handling"""
+def read_input_file(file_path: Path):
+    """Read content from either PDF or text file using marker with Ollama LLM"""
     try:
         if file_path.suffix.lower() == '.pdf':
             try:
-                reader = PdfReader(file_path)
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text()
+                # Configure using ConfigParser
+                config = {
+                    "output_format": "markdown",
+                    "disable_image_extraction": True,
+                    "use_llm": False,  # Disable LLM for PDF conversion but keep ollama options for future use
+                    "llm_service": "marker.services.ollama.OllamaService",
+                    "ollama_base_url": "http://localhost:11434",
+                    "ollama_model": "llama3.2:3b"
+                }
+                config_parser = ConfigParser(config)
+                
+                # Initialize converter with parsed config
+                converter = PdfConverter(
+                    config=config_parser.generate_config_dict(),
+                    artifact_dict=create_model_dict(),
+                    processor_list=config_parser.get_processors(),
+                    renderer=config_parser.get_renderer(),
+                    llm_service=config_parser.get_llm_service()
+                )
+                
+                # Convert the PDF
+                rendered = converter(str(file_path))
+                
+                # Extract text from the rendered content
+                text, _, _ = text_from_rendered(rendered)
                 return text, None
+                
             except Exception as e:
                 return None, f"PDF processing error: {str(e)}"
         else:  # For .txt files
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read(), None
+                
     except Exception as e:
         return None, f"File read error: {str(e)}"
 
