@@ -11,6 +11,7 @@ from marker.models import create_model_dict
 from marker.output import text_from_rendered
 from marker.config.parser import ConfigParser
 
+# Load environment variables
 load_dotenv()
 
 # Define absolute paths
