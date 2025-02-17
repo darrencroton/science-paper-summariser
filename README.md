@@ -32,7 +32,7 @@ science-paper-summariser/
    ```bash
    python -m venv myenv
    source myenv/bin/activate
-   pip install anthropic pypdf2 python-dotenv
+   pip install anthropic pypdf2 python-dotenv marker-pdf
    ```
 
 2. Add your Anthropic API key to `.env`:
