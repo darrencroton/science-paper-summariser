@@ -6,11 +6,7 @@ import logging
 from datetime import datetime
 from dotenv import load_dotenv
 from pathlib import Path
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
-from marker.output import text_from_rendered
-from marker.config.parser import ConfigParser
-
+import base64
 # Load environment variables
 load_dotenv()
 
@@ -62,66 +58,27 @@ def read_project_knowledge():
         with open(KNOWLEDGE_DIR / "paper-summary-template.md") as f:
             template = f.read()
         
-        with open(KNOWLEDGE_DIR / "prompt.txt") as f:
-            prompt_template = f.read()
-        
-        return keywords, template, prompt_template
+        return keywords, template  # Removed prompt_template
     except Exception as e:
         logging.error(f"Failed to read project knowledge files: {str(e)}")
         raise
 
 def read_input_file(file_path: Path):
-    """Read content from either PDF or text file using marker with Ollama LLM"""
+    """Read content from either PDF or text file"""
     try:
+        # Check file size (100MB limit)
+        file_size = file_path.stat().st_size
+        if file_size > 100 * 1024 * 1024:  # 100MB in bytes
+            return None, f"File too large: {file_size/1024/1024:.1f}MB (max 100MB)"
+            
         if file_path.suffix.lower() == '.pdf':
-            try:
-                # Configure using ConfigParser
-                config = {
-                    "output_format": "markdown",
-                    "disable_image_extraction": True,
-                    "use_llm": False,  # Disable LLM for PDF conversion but keep ollama options for future use
-                    "llm_service": "marker.services.ollama.OllamaService",
-                    "ollama_base_url": "http://localhost:11434",
-                    "ollama_model": "llama3.2:3b"
-                }
-                config_parser = ConfigParser(config)
-                
-                # Initialize converter with parsed config
-                converter = PdfConverter(
-                    config=config_parser.generate_config_dict(),
-                    artifact_dict=create_model_dict(),
-                    processor_list=config_parser.get_processors(),
-                    renderer=config_parser.get_renderer(),
-                    llm_service=config_parser.get_llm_service()
-                )
-                
-                # Convert the PDF
-                rendered = converter(str(file_path))
-                
-                # Extract text from the rendered content
-                text, _, _ = text_from_rendered(rendered)
-                return text, None
-                
-            except Exception as e:
-                return None, f"PDF processing error: {str(e)}"
+            with open(file_path, 'rb') as f:
+                return f.read(), None
         else:  # For .txt files
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read(), None
-                
     except Exception as e:
         return None, f"File read error: {str(e)}"
-        
-def validate_input_length(paper_text):
-    """Validate input length and log warnings"""
-    token_estimate = len(paper_text.split())
-    if token_estimate > 12000:
-        log_message(f"WARNING: Paper length ({token_estimate} tokens) may be too long for effective summarization")
-    return token_estimate
-
-def get_max_tokens(paper_text):
-    """Calculate appropriate max_tokens based on input length"""
-    estimated_tokens = len(paper_text.split()) * 0.75 + 1000  # 1000 token overhead for formatting
-    return min(8192, int(estimated_tokens))  # Cap at Sonnet's maximum
 
 def move_to_done(file_path, summary_content):
     """Move processed file to done directory with metadata-based name"""
@@ -226,54 +183,80 @@ def save_summary(summary, input_path):
     except Exception as e:
         log_message(f"Error saving summary: {str(e)}")
 
-def create_system_prompt(keywords, prompt_template):
-    """Create the system prompt for consistent formatting"""
+def create_system_prompt(keywords):
+    """Create the system prompt defining Claude's role and expertise"""
     return (
-        "You're an esteemed professor of astrophysics at Harvard University. "
-        "You will summarize research papers with these STRICT requirements:\n\n"
-        "1. THE VERY FIRST LINE must be the paper title as a level 1 heading\n"
-        "2. NO TEXT whatsoever before the title - not even a greeting or introduction\n"
-        "3. Write in UK English using clear technical language\n"
-        "4. Use markdown formatting\n"
-        "5. Use latex for mathematical expressions\n"
-        "6. Only include content from the provided paper\n"
-        "7. Follow the exact section order and formatting specified\n"
-        "8. Every bullet point must have a supporting footnote containing a verbatim quote\n"
-        "9. IMPORTANT: Footnotes must contain EXACT quotes from the paper - never paraphrase\n"
-        "10. Always enclose footnote quotes in quotation marks and include section/page\n"
-        "11. If you cannot find an exact supporting quote for a statement, do not make the statement\n"
+        "<role>\n"
+        "You are an esteemed professor of astrophysics at Harvard University "
+        "specializing in analyzing research papers. Your expertise includes:\n"
+        "- Identifying key scientific results and their significance\n"
+        "- Writing in clear technical UK English\n"
+        "- Supporting all claims with precise quotations\n"
+        "- Using LaTeX for mathematical expressions\n"
+        "</role>\n\n"
+        "<rules>\n"
+        "1. Write only in UK English using clear technical language\n"
+        "2. Use markdown formatting throughout\n"
+        "3. Use LaTeX for all mathematical expressions\n"
+        "4. Only include content from the provided paper\n"
+        "5. Every bullet point must have a supporting footnote\n"
+        "6. Footnotes must contain EXACT quotes - never paraphrase\n"
+        "7. Always enclose footnote quotes in quotation marks\n"
+        "8. Include page/section reference for every quote\n"
+        "9. Use bold for key terms on first mention\n"
+        "10. Use italics for emphasis and paper names\n"
+        "11. If you cannot find an exact supporting quote, do not make the statement\n"
         "12. ALWAYS include a Glossary section with a table of technical terms\n"
-        "13. Include EVERY author in the author list - never truncate with 'et al.'\n"
-        "14. MUST include the paper's publication month and year in the first few lines\n\n"
-        f"Available astronomy keywords:\n{keywords}\n\n"
-        f"Additional instructions:\n{prompt_template}"
+        "</rules>\n\n"
+        "<knowledgeBase>\n"
+        f"Available astronomy keywords by category:\n{keywords}\n"
+        "</knowledgeBase>"
     )
 
-def create_user_prompt(paper_text, template):
-    """Create the user prompt with the paper and template"""
-    return (
-        f"Summarize this paper following these EXACT requirements:\n\n"
-        f"1. THE VERY FIRST LINE of your response must be the paper title as '# Title'\n"
-        f"2. Do not include ANY text before the title - no introduction, no explanation\n"
-        f"3. For every bullet point, you MUST provide a supporting footnote with an exact, "
-        f"verbatim quote from the paper\n"
-        f"4. Never paraphrase quotes\n"
-        f"5. If you cannot find an exact quote to support a statement, do not make that statement\n"
-        f"6. Include EVERY author in the author list\n"
-        f"7. MUST include the paper's publication month and year\n\n"
-        f"Template to follow:\n\n"
-        f"{template}\n\n"
-        f"Paper to summarize:\n\n"
-        f"---BEGIN PAPER---\n{paper_text}\n---END PAPER---"
+def create_user_prompt(paper_text, template, is_pdf=False):
+    """Create the user prompt with specific task instructions"""
+    base_prompt = (
+        "<task>\n"
+        "Summarize this research paper following these EXACT requirements:\n\n"
+        "<format>\n"
+        "1. THE VERY FIRST LINE must be the paper title as '# Title'\n"
+        "2. NO TEXT before the title - not even a greeting\n"
+        "3. Below title, exactly one blank line, then:\n"
+        "   - Line starting 'Authors: ' with FULL author list\n"
+        "   - Line starting 'Published: ' with month, year, and link\n"
+        "   - One blank line before starting sections\n"
+        "4. Include EVERY author (surname and initials with period, comma separated)\n"
+        "5. Never truncate author list with 'et al.'\n"
+        "6. MUST include publication month and year\n"
+        "7. Follow the exact section order specified\n"
+        "</format>\n\n"
+        "<template>\n"
+        f"Use this exact structure:\n{template}\n"
+        "</template>\n\n"
+        "<tags>\n"
+        "The Tags section must have two parts:\n"
+        "1. First line: Hashtags for telescopes, surveys, datasets, models (proper nouns only)\n"
+        "2. Second line: Science area hashtags (use ONLY provided keywords)\n"
+        "</tags>\n"
+        "</task>\n\n"
     )
+    
+    if not is_pdf:
+        base_prompt += (
+            "<input>\n"
+            f"Paper to summarize:\n\n"
+            f"---BEGIN PAPER---\n{paper_text}\n---END PAPER---\n"
+            "</input>"
+        )
+    
+    return base_prompt
 
 def validate_summary(summary_content):
     """Basic validation of summary format and log results"""
     lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
     
     # Check if first line starts with # 
-    if not lines[0].startswith('#'):
-        log_message(f"WARNING: Summary does not start with title heading")
+    start_with_title = lines[0].startswith('# ')
     
     # Check for year in first few lines
     year_found = False
@@ -281,14 +264,10 @@ def validate_summary(summary_content):
         if re.search(r'\b(19|20)\d{2}\b', line):
             year_found = True
             break
-    if not year_found:
-        log_message("WARNING: No year found in summary")
     
     # Check for et al in authors
     author_complete = not any('et al' in line.lower() 
                             for line in lines[:5] if line.startswith('Authors:'))
-    if not author_complete:
-        log_message("WARNING: Author list appears to be truncated with 'et al.'")
 
     # Check bullets match footnotes
     bullet_count = sum(1 for line in lines 
@@ -304,44 +283,101 @@ def validate_summary(summary_content):
     # Check for Glossary section
     has_glossary = any(line.startswith('## Glossary') for line in lines)
     
+    # Check for Tags section structure
+    has_tags = False
+    has_two_tag_lines = False
+    for i, line in enumerate(lines):
+        if line.startswith('## Tags'):
+            has_tags = True
+            # Check next two non-empty lines start with #
+            tag_lines = [l for l in lines[i+1:i+4] if l.strip()][:2]
+            has_two_tag_lines = (len(tag_lines) == 2 and 
+                               all(l.strip().startswith('#') for l in tag_lines))
+            break
+    
     # Log all validation results
     log_message(f"Validation results:")
-    log_message(f"- First line starts with #: {lines[0].startswith('#')}")
+    log_message(f"- First line starts with #: {start_with_title}")
     log_message(f"- Year found: {year_found}")
     log_message(f"- Complete author list: {author_complete}")
     log_message(f"- Bullet points: {bullet_count}")
     log_message(f"- Footnotes: {footnote_count}")
     log_message(f"- Properly quoted footnotes: {properly_quoted}")
     log_message(f"- Has Glossary section: {has_glossary}")
-    
+    log_message(f"- Has Tags section: {has_tags}")
+    log_message(f"- Has proper tag format: {has_two_tag_lines}")
+
+    if not start_with_title:
+        log_message(f"WARNING: Summary does not start with title heading")
+    if not year_found:
+        log_message("WARNING: No year found in summary")
+    if not author_complete:
+        log_message("WARNING: Author list appears to be truncated with 'et al.'")
     if bullet_count != footnote_count:
         log_message(f"WARNING: Mismatch between bullets ({bullet_count}) and footnotes ({footnote_count})")
     if properly_quoted != footnote_count:
         log_message(f"WARNING: Some footnotes may not be properly quoted ({properly_quoted}/{footnote_count})")
     if not has_glossary:
         log_message("WARNING: Missing Glossary section")
+    if not has_tags or not has_two_tag_lines:
+        log_message("WARNING: Missing or improperly formatted Tags section")
 
-def process_file(file_path, keywords, template, prompt_template):
-    paper_text, error = read_input_file(file_path)
+def process_file(file_path, keywords, template):
+    paper_content, error = read_input_file(file_path)
     if error:
         return False, file_path.name, error
     
-    validate_input_length(paper_text)
-    system_prompt = create_system_prompt(keywords, prompt_template)
-    user_prompt = create_user_prompt(paper_text, template)
-    max_tokens = get_max_tokens(paper_text)
+    is_pdf = file_path.suffix.lower() == '.pdf'
     
+    # Create appropriate prompts based on file type
+    system_prompt = create_system_prompt(keywords)
+
+    if is_pdf:
+        user_prompt = create_user_prompt(
+            paper_text="",
+            template=template,
+            is_pdf=True
+        )
+    else:
+        user_prompt = create_user_prompt(
+            paper_text=paper_content,
+            template=template,
+            is_pdf=False
+        )
+    
+    # Write complete prompt to file
+    full_prompt = f"SYSTEM PROMPT\n{system_prompt}\n\n---\n\nUSER PROMPT\n{user_prompt}"
+    prompt_file = LOGS_DIR / "prompt.txt"
+    with open(prompt_file, 'w') as f:
+        f.write(full_prompt)
+    log_message(f"Full prompt written to {prompt_file}")
+
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    
+
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            messages = [{
+                "role": "user",
+                "content": [{"type": "text", "text": user_prompt}]
+            }]
+            
+            if is_pdf:
+                messages[0]["content"].append({
+                    "type": "document",  # Changed from "file" to "document"
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": base64.b64encode(paper_content).decode()
+                    }
+                })
+                
             message = client.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=max_tokens,
                 temperature=0.3,
+                max_tokens=8192,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
+                messages=messages
             )
             
             summary_content = message.content[0].text
@@ -383,7 +419,7 @@ def main():
         DONE_DIR.mkdir(exist_ok=True)
         KNOWLEDGE_DIR.mkdir(exist_ok=True)
         
-        keywords, template, prompt_template = read_project_knowledge()
+        keywords, template = read_project_knowledge()
         progress = load_progress()
         
         logging.info(f"Monitoring directory: {INPUT_DIR.absolute()}")
@@ -400,7 +436,7 @@ def main():
                     logging.info(f"Processing file: {file_path.name}")
                     
                     success, filename, error = process_file(
-                        file_path, keywords, template, prompt_template
+                        file_path, keywords, template
                     )
                     
                     if success:
