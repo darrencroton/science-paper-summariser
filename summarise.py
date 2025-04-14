@@ -291,7 +291,7 @@ def process_file(file_path, keywords, template):
                     })
                     
                 message = client.messages.create(
-                    model="claude-3-5-sonnet-20241022",
+                    model="claude-3-7-sonnet-20250219",
                     temperature=0.2,
                     max_tokens=8192,
                     system=system_prompt,
