@@ -302,16 +302,20 @@ def process_file(file_path, keywords, template):
                 return False, file_path.name, "Failed to move file"
             
         except requests.exceptions.RequestException as e:
-            error_msg = f"Attempt {attempt + 1} failed - API request error: {str(e)}"
+            provider_name = llm_provider.__class__.__name__.replace('Provider', '').lower()
+            error_msg = f"Attempt {attempt + 1} failed - {provider_name} API request error: {str(e)}"
             log_message(error_msg)
         except ValueError as e:
-            error_msg = f"Attempt {attempt + 1} failed - Value error: {str(e)}"
+            provider_name = llm_provider.__class__.__name__.replace('Provider', '').lower()
+            error_msg = f"Attempt {attempt + 1} failed - {provider_name} value error: {str(e)}"
             log_message(error_msg)
         except ImportError as e:
-            error_msg = f"Attempt {attempt + 1} failed - Missing dependency: {str(e)}"
+            provider_name = llm_provider.__class__.__name__.replace('Provider', '').lower()
+            error_msg = f"Attempt {attempt + 1} failed - {provider_name} missing dependency: {str(e)}"
             log_message(error_msg)
         except Exception as e:
-            error_msg = f"Attempt {attempt + 1} failed - {LLM_PROVIDER} error: {e.__class__.__name__}: {str(e)}"
+            provider_name = llm_provider.__class__.__name__.replace('Provider', '').lower()
+            error_msg = f"Attempt {attempt + 1} failed - {provider_name} error: {e.__class__.__name__}: {str(e)}"
             log_message(error_msg)
             
         if attempt < max_retries - 1:

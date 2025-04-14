@@ -224,11 +224,11 @@ class PerplexityProvider(LLMProvider):
         """Return maximum context size for Perplexity model"""
         # Perplexity models and their context sizes 
         model_contexts = {
-            "sonar-deep-research": 128000,
-            "sonar-reasoning-pro": 128000,
-            "sonar-reasoning": 128000,
-            "sonar-pro": 128000,
             "sonar": 128000,
+            "sonar-pro": 128000,
+            "sonar-deep-research": 128000,
+            "sonar-reasoning": 128000,
+            "sonar-reasoning-pro": 128000,
             "r1-1776": 128000
         }
         return model_contexts.get(self.model, 128000)
