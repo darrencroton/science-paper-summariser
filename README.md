@@ -36,9 +36,11 @@ science-paper-summariser/
    pip install -r requirements.txt
    ```
 
-2. Add your Anthropic API key to `.env`:
+2. Add your Anthropic/OpenAI/Perplexity API key(s) to `.env`:
    ```
    ANTHROPIC_API_KEY=your_key_here
+   OPENAI_API_KEY=your_key_here
+   PERPLEXITY_API_KEY=your_key_here
    ```
 
 3. Create required directories:
@@ -73,7 +75,7 @@ science-paper-summariser/
    # Use Perplexity
    ./start_claude_summariser.sh perplexity
    ```
-   
+
 2. Place PDF or text files in the `input/` directory
 
 3. Monitor `output/` for generated summaries. Processed papers end up in `processed/`
