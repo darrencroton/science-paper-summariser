@@ -3,3 +3,4 @@ openai>=1.1.0
 python-dotenv>=1.0.0
 requests>=2.31.0
 marker-pdf>=0.1.4
+google-generativeai>=0.3.0

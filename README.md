@@ -1,6 +1,6 @@
 # Science Paper Summariser
 
-A Python tool that uses Claude AI to automatically summarise scientific papers. The tool monitors an input directory for new PDFs or text files, processes them using Claude, and generates markdown summaries with extensive referencing back to the source material.
+A Python tool that uses LLMs (Claude, GPT, Gemini, etc.) to automatically summarise scientific papers. The tool monitors an input directory for new PDFs or text files, processes them using your chosen model, and generates markdown summaries with extensive referencing back to the source material.
 
 ## Features
 
@@ -36,11 +36,12 @@ science-paper-summariser/
    pip install -r requirements.txt
    ```
 
-2. Add your Anthropic/OpenAI/Perplexity API key(s) to `.env`:
+2. Add your LLM provider API key(s) to `.env` (see `.env.template`):
    ```
    ANTHROPIC_API_KEY=your_key_here
    OPENAI_API_KEY=your_key_here
    PERPLEXITY_API_KEY=your_key_here
+   GOOGLE_API_KEY=your_key_here
    ```
 
 3. Create required directories:
@@ -74,6 +75,12 @@ science-paper-summariser/
    
    # Use Perplexity
    ./start_claude_summariser.sh perplexity
+   
+   # Use Google Gemini
+   ./start_claude_summariser.sh gemini
+   
+   # Specify a different Gemini model
+   ./start_claude_summariser.sh gemini gemini-1.5-pro
    ```
 
 2. Place PDF or text files in the `input/` directory
@@ -108,6 +115,10 @@ This tool supports a variety of LLM providers and models. Please check `llm_prov
 - `sonar-reasoning`
 - `sonar-pro`
 
+### Google Gemini
+- `gemini-2.5-pro-exp-03-25` (default)
+- `gemini-1.5-flash-002`
+
 ### Ollama
 - `qwen2.5:14b-instruct-q8_0` (default)
 - `llama3.1:8b-instruct-q8_0`
@@ -122,6 +133,7 @@ This tool supports a variety of LLM providers and models. Please check `llm_prov
   - Anthropic API key (for Claude)
   - OpenAI API key (for GPT models)
   - Perplexity API key (for Perplexity)
+  - Google API key (for Gemini)
 - Ollama installed locally (for Ollama provider)
 - python-dotenv
 - marker-pdf

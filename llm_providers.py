@@ -2,7 +2,7 @@
 LLM Provider Interface and Implementations for Science Paper Summariser
 
 This module provides a consistent interface for different LLM providers
-including Claude, OpenAI, Perplexity, and Ollama.
+including Claude, OpenAI, Perplexity, Gemini, and Ollama.
 """
 
 import os
@@ -265,6 +265,112 @@ class PerplexityProvider(LLMProvider):
         return "r1-1776"  # Default model
 
 
+class GeminiProvider(LLMProvider):
+    """Google Gemini API provider"""
+    
+    def supports_direct_pdf(self):
+        # Gemini 2.5 Pro supports direct PDF input
+        return True
+    
+    def setup(self):
+        """Initialize Google AI API client"""
+        try:
+            import google.generativeai as genai
+        except ImportError:
+            raise ImportError("The 'google-generativeai' package is required. Install with: pip install google-generativeai")
+        
+        self.api_key = os.getenv("GOOGLE_API_KEY")
+        if not self.api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable not set")
+        
+        # Configure the Gemini API with your API key
+        genai.configure(api_key=self.api_key)
+        
+        # Store the genai module reference for later use
+        self.genai = genai
+        
+        # Set the model based on config or default
+        self.model = self.config.get("model", self.get_default_model())
+        
+        # Initialize the model
+        try:
+            self.client = genai.GenerativeModel(model_name=self.model)
+            logging.info(f"Initialized Gemini model: {self.model}")
+        except Exception as e:
+            raise ValueError(f"Failed to initialize Gemini model: {str(e)}")
+    
+    def process_document(self, content, is_pdf, system_prompt, user_prompt, max_tokens=8192):
+        """Process document with Google Gemini API"""
+        try:
+            # For debugging
+            logging.info(f"Processing with Gemini, PDF: {is_pdf}, Content type: {type(content).__name__}")
+            
+            # Create the generation config
+            generation_config = {
+                "temperature": self.config.get("temperature", 0.2),
+                "max_output_tokens": max_tokens,
+                "top_p": 0.95,
+                "top_k": 40
+            }
+            
+            # Create combined prompt with system instructions
+            combined_prompt = f"System instructions: {system_prompt}\n\n{user_prompt}"
+            
+            # Direct approach without chat history
+            if is_pdf and isinstance(content, bytes) and self.supports_direct_pdf():
+                logging.info(f"Using direct PDF upload to Gemini ({len(content)} bytes)")
+                
+                # Create content parts with text and PDF
+                content_parts = [
+                    {"text": combined_prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "application/pdf",
+                            "data": base64.b64encode(content).decode('utf-8')
+                        }
+                    }
+                ]
+                
+                # Generate content with PDF
+                response = self.client.generate_content(
+                    contents=content_parts,
+                    generation_config=generation_config
+                )
+            else:
+                # Generate content with just text
+                logging.info("Using text-only prompt with Gemini")
+                response = self.client.generate_content(
+                    contents=combined_prompt,
+                    generation_config=generation_config
+                )
+            
+            # Extract text from response
+            result = response.text
+            
+            if not result:
+                raise ValueError("No content returned from Gemini API")
+                
+            logging.info(f"Successfully received response from Gemini ({len(result)} chars)")
+            return result
+            
+        except Exception as e:
+            logging.error(f"Gemini API error: {str(e)}")
+            raise
+    
+    def get_max_context_size(self):
+        """Return maximum context size for Gemini model"""
+        # Gemini models and their context sizes
+        model_contexts = {
+            "gemini-2.5-pro-exp-03-25": 1048576, 
+            "gemini-1.5-flash-002": 1048576
+        }
+        return model_contexts.get(self.model, 32768)  # Default to 32K if unknown
+    
+    def get_default_model(self):
+        """Return the default Gemini model"""
+        return "gemini-2.5-pro-exp-03-25"  # Use Gemini 1.5 Pro as default (most stable)
+
+
 class OllamaProvider(LLMProvider):
     """Ollama API provider"""
     
@@ -332,7 +438,8 @@ def create_llm_provider(provider_name, config=None):
         "claude": ClaudeProvider,
         "ollama": OllamaProvider,
         "openai": OpenAIProvider,
-        "perplexity": PerplexityProvider
+        "perplexity": PerplexityProvider,
+        "gemini": GeminiProvider
     }
     
     if provider_name not in providers:
