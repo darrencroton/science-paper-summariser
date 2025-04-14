@@ -96,7 +96,7 @@ def read_project_knowledge():
         logging.error(f"Failed to read project knowledge files: {str(e)}")
         raise
 
-def read_input_file(file_path: Path):
+def read_input_file(file_path: Path, llm_provider):
     """Read content from either PDF or text file with provider-specific handling"""
     try:
         # Check file size (100MB limit)
@@ -105,80 +105,61 @@ def read_input_file(file_path: Path):
             return None, f"File too large: {file_size/1024/1024:.1f}MB (max 100MB)"
 
         if file_path.suffix.lower() == '.pdf':
-            # For providers that need text extraction (OpenAI, Perplexity)
-            if LLM_PROVIDER in ["openai", "perplexity"]:
+            # Check if provider supports direct PDF input
+            if llm_provider.supports_direct_pdf():
+                # Direct binary reading approach for providers that support PDFs directly
+                with open(file_path, 'rb') as f:
+                    return f.read(), None
+            else:
                 try:
-                    # Use Marker to extract text from PDF
+                    # Configure marker for text extraction
                     config = {
                         "output_format": "markdown",
                         "disable_image_extraction": True,
                         "use_llm": False
                     }
+                    
+                    # If using Ollama, add Ollama-specific config
+                    if llm_provider.__class__.__name__ == "OllamaProvider":
+                        ollama_model = llm_provider.model
+                        config.update({
+                            "llm_service": "marker.services.ollama.OllamaService",
+                            "ollama_base_url": "http://localhost:11434",
+                            "ollama_model": ollama_model
+                        })
+                    
                     config_parser = ConfigParser(config)
                     
                     # Initialize converter
-                    converter = PdfConverter(
-                        config=config_parser.generate_config_dict(),
-                        artifact_dict=create_model_dict(),
-                        processor_list=config_parser.get_processors(),
-                        renderer=config_parser.get_renderer()
-                    )
+                    converter_kwargs = {
+                        "config": config_parser.generate_config_dict(),
+                        "artifact_dict": create_model_dict(),
+                        "processor_list": config_parser.get_processors(),
+                        "renderer": config_parser.get_renderer()
+                    }
+                    
+                    # Add llm_service if using Ollama
+                    if llm_provider.__class__.__name__ == "OllamaProvider":
+                        converter_kwargs["llm_service"] = config_parser.get_llm_service()
+                    
+                    converter = PdfConverter(**converter_kwargs)
                     
                     # Convert the PDF to text
                     rendered = converter(str(file_path))
                     text, _, _ = text_from_rendered(rendered)
-                    log_message(f"Extracted {len(text.split())} words from PDF for {LLM_PROVIDER}")
+                    provider_name = llm_provider.__class__.__name__.replace('Provider', '')
+                    log_message(f"Extracted {len(text.split())} words from PDF for {provider_name}")
                     return text, None
                     
                 except Exception as e:
                     return None, f"PDF processing error: {str(e)}"
-            
-            elif LLM_PROVIDER == "ollama":
-                try:
-                    # Configure using ConfigParser for Marker
-                    ollama_model = LLM_MODEL or "mistral:7b"
-                    config = {
-                        "output_format": "markdown",
-                        "disable_image_extraction": True,
-                        "use_llm": False,
-                        "llm_service": "marker.services.ollama.OllamaService",
-                        "ollama_base_url": "http://localhost:11434",
-                        "ollama_model": ollama_model
-                    }
-                    config_parser = ConfigParser(config)
-                    
-                    # Initialize converter with parsed config
-                    converter = PdfConverter(
-                        config=config_parser.generate_config_dict(),
-                        artifact_dict=create_model_dict(),
-                        processor_list=config_parser.get_processors(),
-                        renderer=config_parser.get_renderer(),
-                        llm_service=config_parser.get_llm_service()
-                    )
-                    
-                    # Convert the PDF
-                    rendered = converter(str(file_path))
-                    text, _, _ = text_from_rendered(rendered)
-                    return text, None
-                    
-                except Exception as e:
-                    return None, f"PDF processing error: {str(e)}"
-            else:
-                # Claude's direct binary reading approach for providers that support PDFs directly
-                with open(file_path, 'rb') as f:
-                    return f.read(), None
         else:  # For .txt files
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read(), None
                 
     except Exception as e:
         return None, f"File read error: {str(e)}"
-
-# This function is no longer needed as each provider handles token limits
-# def get_max_tokens(paper_text):
-#     """Calculate appropriate max_tokens based on input length and provider"""
-#     ...
-    
+        
 def create_system_prompt(keywords):
     """Create the system prompt defining role and expertise"""
     return (
@@ -237,9 +218,8 @@ def create_user_prompt(paper_text, template, is_pdf=False):
         "</task>\n\n"
     )
     
-    # Include paper text in the prompt for txt files or PDFs that need text extraction
-    # This includes Ollama, OpenAI, and Perplexity for PDFs
-    if not is_pdf or LLM_PROVIDER in ["ollama", "openai", "perplexity"]:
+    # Include paper text in the prompt if provided
+    if paper_text:
         base_prompt += (
             "<input>\n"
             f"Paper to summarize:\n\n"
@@ -254,11 +234,12 @@ def process_file(file_path, keywords, template):
     # Determine file type
     is_pdf = file_path.suffix.lower() == '.pdf'
     
-    # Check if we need to extract text from PDF
-    needs_text_extraction = LLM_PROVIDER in ["openai", "perplexity"] and is_pdf
+    # Initialize the LLM provider - do this first so we can use its capabilities
+    provider_config = {"model": LLM_MODEL} if LLM_MODEL else {}
+    llm_provider = create_llm_provider(LLM_PROVIDER, config=provider_config)
     
-    # Read the file content
-    paper_content, error = read_input_file(file_path)
+    # Read the file content based on provider capabilities
+    paper_content, error = read_input_file(file_path, llm_provider)
     
     # Log the content type to diagnose issues
     if is_pdf:
@@ -266,19 +247,14 @@ def process_file(file_path, keywords, template):
     if error:
         return False, file_path.name, error
     
-    # Initialize the LLM provider
-    provider_config = {"model": LLM_MODEL} if LLM_MODEL else {}
-    llm_provider = create_llm_provider(LLM_PROVIDER, config=provider_config)
-    
     # Create appropriate prompts
     system_prompt = create_system_prompt(keywords)
     
-    # For OpenAI and Perplexity, we need to include the extracted text in the prompt
-    # since they don't have native PDF handling
-    include_text_in_prompt = not is_pdf or (is_pdf and (LLM_PROVIDER in ["ollama", "openai", "perplexity"]))
+    # Determine if we need to include text in prompt (inverse of supports_direct_pdf)
+    include_text_in_prompt = not is_pdf or not llm_provider.supports_direct_pdf()
     
     # If we're including text in the prompt and the content is binary, there's a problem
-    if include_text_in_prompt and is_pdf and isinstance(paper_content, bytes) and LLM_PROVIDER in ["openai", "perplexity"]:
+    if include_text_in_prompt and is_pdf and isinstance(paper_content, bytes):
         log_message("Warning: PDF text not properly extracted for prompt inclusion")
     
     user_prompt = create_user_prompt(
@@ -287,8 +263,10 @@ def process_file(file_path, keywords, template):
         is_pdf=is_pdf
     )
     
-    if is_pdf and LLM_PROVIDER in ["openai", "perplexity"]:
-        log_message(f"PDF text extraction for {LLM_PROVIDER}: text length is {len(str(paper_content)) if paper_content else 0} characters")
+    # Only log text extraction for PDFs if needed
+    if is_pdf and not llm_provider.supports_direct_pdf():
+        provider_name = llm_provider.__class__.__name__.replace('Provider', '')
+        log_message(f"PDF text extraction for {provider_name}: text length is {len(str(paper_content)) if paper_content else 0} characters")
     
     # Write complete prompt to file for debugging
     full_prompt = f"SYSTEM PROMPT\n{system_prompt}\n\n---\n\nUSER PROMPT\n{user_prompt}"

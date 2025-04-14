@@ -39,9 +39,16 @@ class LLMProvider:
         """Return the default model for this provider"""
         raise NotImplementedError
 
+    def supports_direct_pdf(self):
+        """Return whether this provider can process PDFs directly without text extraction"""
+        return False  # Default to False for safety
+
 
 class ClaudeProvider(LLMProvider):
     """Claude/Anthropic API provider"""
+
+    def supports_direct_pdf(self):
+        return True
     
     def setup(self):
         """Initialize Claude client"""
@@ -98,7 +105,10 @@ class ClaudeProvider(LLMProvider):
 
 class OpenAIProvider(LLMProvider):
     """OpenAI API provider"""
-    
+
+    def supports_direct_pdf(self):
+        return False
+
     def setup(self):
         """Initialize OpenAI client"""
         import openai
@@ -149,7 +159,10 @@ class OpenAIProvider(LLMProvider):
 
 class PerplexityProvider(LLMProvider):
     """Perplexity API provider"""
-    
+
+    def supports_direct_pdf(self):
+        return False
+
     def setup(self):
         """Initialize Perplexity settings"""
         self.api_key = os.getenv("PERPLEXITY_API_KEY")
@@ -218,7 +231,7 @@ class PerplexityProvider(LLMProvider):
             "sonar": 128000,
             "r1-1776": 128000
         }
-        return model_contexts.get(self.model, 200000)
+        return model_contexts.get(self.model, 128000)
     
     def get_default_model(self):
         """Return the default Perplexity model"""
@@ -228,6 +241,9 @@ class PerplexityProvider(LLMProvider):
 class OllamaProvider(LLMProvider):
     """Ollama API provider"""
     
+    def supports_direct_pdf(self):
+        return False
+
     def setup(self):
         """Initialize Ollama settings"""
         self.model = self.config.get("model", self.get_default_model())
