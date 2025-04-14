@@ -33,7 +33,7 @@ science-paper-summariser/
    ```bash
    python -m venv myenv
    source myenv/bin/activate
-   pip install anthropic pypdf2 python-dotenv marker-pdf
+   pip install -r requirements.txt
    ```
 
 2. Add your Anthropic API key to `.env`:
@@ -87,9 +87,7 @@ This tool supports a variety of LLM providers and models. Please check llm_provi
 
 ### OpenAI
 - `gpt-4o` (default)
-- `gpt-4-turbo`
-- `gpt-4`
-- `gpt-3.5-turbo`
+- `gpt-4o-mini`
 
 ### Perplexity
 - `r1-1776` (default)
@@ -100,17 +98,14 @@ This tool supports a variety of LLM providers and models. Please check llm_provi
 - `sonar-pro`
 
 ### Ollama
-- `mistral:7b` (default)
-- `llama3:70b` 
-- `llama3:8b`
-- `mixtral:latest`
+- `qwen2.5:14b-instruct-q8_0` (default)
 - Any model available in your local Ollama installation
 
-2. Place PDF or text files in the `input/` directory
+1. Place PDF or text files in the `input/` directory
 
-3. Monitor `output/` for generated summaries. Processed papers end up in `processed/`
+2. Monitor `output/` for generated summaries. Processed papers end up in `processed/`
 
-4. Stop the summariser:
+3. Stop the summariser:
    ```bash
    ./stop_claude_summariser.sh
    ```

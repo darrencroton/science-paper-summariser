@@ -107,7 +107,7 @@ class OpenAIProvider(LLMProvider):
     """OpenAI API provider"""
 
     def supports_direct_pdf(self):
-        return False
+        return True
 
     def setup(self):
         """Initialize OpenAI client"""
@@ -121,24 +121,53 @@ class OpenAIProvider(LLMProvider):
     
     def process_document(self, content, is_pdf, system_prompt, user_prompt, max_tokens=8192):
         """Process document with OpenAI API"""
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
         
-        # For PDFs, we need to extract text first since OpenAI doesn't have direct PDF support
-        # This would need to be implemented using a PDF extraction tool
-        if is_pdf:
-            # We'd need to handle PDF extraction with a separate tool here
-            logging.warning("PDF processing with OpenAI requires text extraction first")
-            # This implementation would depend on how to handle PDFs with OpenAI
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.config.get("temperature", 0.2),
-            max_tokens=max_tokens
-        )
+        # For PDFs, use the Responses API which supports direct PDF input
+        if is_pdf and isinstance(content, bytes):
+            # Creating input structure for Responses API
+            input_content = [
+                {
+                    "role": "system", 
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": user_prompt},
+                        {
+                            "type": "input_file",
+                            "file_data": f"data:application/pdf;base64,{base64.b64encode(content).decode('utf-8')}",
+                            "filename": "document.pdf"
+                        }
+                    ]
+                }
+            ]
+            
+            # Use the Responses API for PDF handling
+            # Responses API doesn't use max_tokens or max_completion_tokens
+            response = self.client.responses.create(
+                model=self.model,
+                input=input_content,
+                temperature=self.config.get("temperature", 0.2)
+            )
+            
+            # Extract the text from the response
+            return response.output[0].content[0].text
+            
+        else:
+            # For regular text content, use the Chat Completions API
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+            
+            # Use the Chat Completions API
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.config.get("temperature", 0.2),
+                max_tokens=max_tokens
+            )
         
         return response.choices[0].message.content
     
@@ -146,15 +175,13 @@ class OpenAIProvider(LLMProvider):
         """Return maximum context size for OpenAI model"""
         model_contexts = {
             "gpt-4o": 128000,
-            "gpt-4-turbo": 128000,
-            "gpt-4": 8192,
-            "gpt-3.5-turbo": 16385
+            "gpt-4o-mini": 128000
         }
         return model_contexts.get(self.model, 16385)
     
     def get_default_model(self):
         """Return the default OpenAI model for scientific PDF summarization"""
-        return "gpt-4o"  # Currently the best model for scientific content
+        return "gpt-4o"  # Currently the best model for scientific content with PDF support
 
 
 class PerplexityProvider(LLMProvider):
@@ -287,18 +314,20 @@ class OllamaProvider(LLMProvider):
         """Return maximum context size for Ollama model"""
         # This would ideally query the Ollama API for the model's context size
         model_contexts = {
-            "llama3:70b": 8192, 
-            "llama3:8b": 8192,
-            "mistral:7b": 8192,
-            "mistral:latest": 32000,
-            "mixtral:latest": 32000,
-            "cogito:32b": 131072
+            "gemma3:12b": 8192, # crap
+            "phi4-mini:3.8b-fp16": 131072, # shallow
+            "granite3.2:8b-instruct-q8_0": 131072, # Bad
+            "qwen2.5:7b-instruct-q8_0": 32768, # below average
+            "qwen2.5:14b-instruct-q8_0": 32768, # pretty good
+            "deepseek-r1:14b-qwen-distill-q8_0": 131072, # 
+            "mistral-small3.1:24b": 131072, # 
+            "cogito:14b-v1-preview-qwen-q8_0": 131072 # 
         }
         return model_contexts.get(self.model.lower(), 8192)
     
     def get_default_model(self):
         """Return the default Ollama model"""
-        return "cogito:32b"
+        return "qwen2.5:14b-instruct-q8_0"
 
 
 # Factory function to create the appropriate provider
