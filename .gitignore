@@ -34,7 +34,7 @@ ehthumbs.db
 Thumbs.db
 
 # Other
-start_claude_summariser.command
+*.command
 input
 output
 processed
