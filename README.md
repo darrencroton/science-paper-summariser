@@ -11,6 +11,7 @@ A Python tool that uses Claude AI to automatically summarise scientific papers. 
 - Creates glossary of technical terms
 - Moves processed files to archive
 - Comprehensive logging
+- Tracks files that failed after 3 processing attempts in failed.log
 
 ## Directory Structure
 
@@ -65,6 +66,7 @@ science-paper-summariser/
    ```bash
    ./stop_claude_summariser.sh
    ```
+
 
 ## Requirements
 

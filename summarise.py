@@ -32,6 +32,7 @@ OUTPUT_DIR = SCRIPT_DIR / "output"
 LOGS_DIR = SCRIPT_DIR / "logs"
 DONE_DIR = SCRIPT_DIR / "processed"
 PROGRESS_FILE = LOGS_DIR / "completed.log"
+FAILED_FILE = LOGS_DIR / "failed.log"
 KNOWLEDGE_DIR = SCRIPT_DIR / "project_knowledge"
 
 def check_environment():
@@ -64,11 +65,25 @@ def load_progress():
             return {line.strip() for line in f if line.strip()}
     return set()
 
+def load_failed_files():
+    """Load list of permanently failed files"""
+    if FAILED_FILE.exists():
+        with open(FAILED_FILE, 'r') as f:
+            return {line.strip().split('|')[0] for line in f if line.strip()}
+    return set()
+
 def save_progress(processed_files):
     """Save progress of processed files"""
     with open(PROGRESS_FILE, 'w') as f:
         for filename in sorted(processed_files):
             f.write(f"{filename}\n")
+
+def add_to_failed_files(filename, error):
+    """Add a file to the permanently failed list with timestamp and error"""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(FAILED_FILE, 'a') as f:
+        f.write(f"{filename}|{timestamp}|{error}\n")
+    log_message(f"Added {filename} to failed files list - will be skipped in future processing attempts")
 
 def read_project_knowledge():
     """Read all project knowledge files"""
@@ -505,15 +520,17 @@ def save_summary(summary, input_path):
     except Exception as e:
         log_message(f"Error saving summary: {str(e)}")
 
-def get_pending_files(input_dir, progress):
-    """Get list of unprocessed files"""
+def get_pending_files(input_dir, progress, failed):
+    """Get list of unprocessed files, excluding permanently failed files"""
     return [
         f for f in input_dir.glob("*.*") 
         if f.suffix.lower() in ['.pdf', '.txt'] 
         and f.name not in progress
+        and f.name not in failed
     ]
 
 def main():
+        
     try:
         
         setup_logging()
@@ -527,6 +544,10 @@ def main():
         
         keywords, template = read_project_knowledge()
         progress = load_progress()
+        failed_files = load_failed_files()
+        
+        if failed_files:
+            log_message(f"Loaded {len(failed_files)} permanently failed files that will be skipped")
         
         logging.info(f"Monitoring directory: {INPUT_DIR.absolute()}")
         
@@ -534,7 +555,7 @@ def main():
         
         while True:
             try:
-                pending_files = get_pending_files(INPUT_DIR, progress)
+                pending_files = get_pending_files(INPUT_DIR, progress, failed_files)
                 
                 if pending_files:
                     file_path = pending_files[0]  # Process one file at a time
@@ -550,6 +571,11 @@ def main():
                         save_progress(progress)
                     else:
                         logging.error(f"Failed to process {filename}: {error}")
+                        
+                        # After 3 failed attempts, add to failed.log regardless of error type
+                        log_message(f"File {filename} failed after 3 attempts - marking as permanently failed")
+                        add_to_failed_files(filename, error)
+                        failed_files.add(filename)
                     
                     logging.info("Pausing before next file...")
                     time.sleep(10)
