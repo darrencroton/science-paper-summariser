@@ -53,10 +53,58 @@ science-paper-summariser/
 
 ## Usage
 
-1. Start the summariser:
+1. Start the summariser with your preferred LLM provider:
    ```bash
+   # Use Claude (default)
    ./start_claude_summariser.sh
+   
+   # Specify a different Claude model
+   ./start_claude_summariser.sh claude claude-3-5-sonnet-20241022
+   
+   # Use Ollama with optional model specification
+   ./start_claude_summariser.sh ollama mistral:7b
+   
+   # Use OpenAI (GPT-4o by default for scientific papers)
+   ./start_claude_summariser.sh openai
+   
+   # Specify a different OpenAI model
+   ./start_claude_summariser.sh openai gpt-4-turbo
+   
+   # Use Perplexity
+   ./start_claude_summariser.sh perplexity
    ```
+
+## Supported Models
+
+This tool supports a variety of LLM providers and models. Please check llm_providers.py and update as needed.
+
+### Claude (Anthropic)
+- `claude-3-7-sonnet-20250219` (default)
+- `claude-3-5-sonnet-20241022`
+- `claude-3-opus-20240229`
+- `claude-3-sonnet-20240229`
+- `claude-3-haiku-20240307`
+
+### OpenAI
+- `gpt-4o` (default)
+- `gpt-4-turbo`
+- `gpt-4`
+- `gpt-3.5-turbo`
+
+### Perplexity
+- `sonar` (default)
+- `sonar-deep-research`
+- `sonar-reasoning-pro`
+- `sonar-reasoning`
+- `sonar-pro`
+- `r1-1776`
+
+### Ollama
+- `mistral:7b` (default)
+- `llama3:70b` 
+- `llama3:8b`
+- `mixtral:latest`
+- Any model available in your local Ollama installation
 
 2. Place PDF or text files in the `input/` directory
 
@@ -72,6 +120,10 @@ science-paper-summariser/
 
 - zsh shell
 - Python 3.9+
-- Anthropic API key
-- PyPDF2
+- API keys (depending on provider):
+  - Anthropic API key (for Claude)
+  - OpenAI API key (for GPT models)
+  - Perplexity API key (for Perplexity)
+- Ollama installed locally (for Ollama provider)
 - python-dotenv
+- marker-pdf

@@ -5,7 +5,6 @@ import time
 import logging
 import requests
 import json
-import anthropic
 import base64
 from dotenv import load_dotenv
 from pathlib import Path
@@ -13,17 +12,16 @@ from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.output import text_from_rendered
 from marker.config.parser import ConfigParser
+from llm_providers import create_llm_provider
 
 # Load environment variables
 load_dotenv()
 
-# Define LLM provider (either "claude" or "ollama")
+# Define LLM provider
 LLM_PROVIDER = sys.argv[1] if len(sys.argv) > 1 else 'claude'
 
-# Define the basse Ollama model to use
-OLLAMA_MODEL = (sys.argv[2] if len(sys.argv) > 2 
-                else "mistral:7b" if len(sys.argv) > 1 
-                else "")
+# Define the provider-specific model (if provided)
+LLM_MODEL = sys.argv[2] if len(sys.argv) > 2 else None
 
 # Define absolute paths
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -37,9 +35,8 @@ KNOWLEDGE_DIR = SCRIPT_DIR / "project_knowledge"
 
 def check_environment():
     """Check required environment variables are set"""
-    if LLM_PROVIDER == "claude":
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+    # Provider-specific checks are now handled in the provider classes
+    pass
 
 def setup_logging():
     """Set up system-wide logging"""
@@ -108,16 +105,45 @@ def read_input_file(file_path: Path):
             return None, f"File too large: {file_size/1024/1024:.1f}MB (max 100MB)"
 
         if file_path.suffix.lower() == '.pdf':
-            if LLM_PROVIDER == "ollama":
+            # For providers that need text extraction (OpenAI, Perplexity)
+            if LLM_PROVIDER in ["openai", "perplexity"]:
+                try:
+                    # Use Marker to extract text from PDF
+                    config = {
+                        "output_format": "markdown",
+                        "disable_image_extraction": True,
+                        "use_llm": False
+                    }
+                    config_parser = ConfigParser(config)
+                    
+                    # Initialize converter
+                    converter = PdfConverter(
+                        config=config_parser.generate_config_dict(),
+                        artifact_dict=create_model_dict(),
+                        processor_list=config_parser.get_processors(),
+                        renderer=config_parser.get_renderer()
+                    )
+                    
+                    # Convert the PDF to text
+                    rendered = converter(str(file_path))
+                    text, _, _ = text_from_rendered(rendered)
+                    log_message(f"Extracted {len(text.split())} words from PDF for {LLM_PROVIDER}")
+                    return text, None
+                    
+                except Exception as e:
+                    return None, f"PDF processing error: {str(e)}"
+            
+            elif LLM_PROVIDER == "ollama":
                 try:
                     # Configure using ConfigParser for Marker
+                    ollama_model = LLM_MODEL or "mistral:7b"
                     config = {
                         "output_format": "markdown",
                         "disable_image_extraction": True,
                         "use_llm": False,
                         "llm_service": "marker.services.ollama.OllamaService",
                         "ollama_base_url": "http://localhost:11434",
-                        "ollama_model": OLLAMA_MODEL
+                        "ollama_model": ollama_model
                     }
                     config_parser = ConfigParser(config)
                     
@@ -138,7 +164,7 @@ def read_input_file(file_path: Path):
                 except Exception as e:
                     return None, f"PDF processing error: {str(e)}"
             else:
-                # Claude's direct binary reading approach
+                # Claude's direct binary reading approach for providers that support PDFs directly
                 with open(file_path, 'rb') as f:
                     return f.read(), None
         else:  # For .txt files
@@ -148,15 +174,10 @@ def read_input_file(file_path: Path):
     except Exception as e:
         return None, f"File read error: {str(e)}"
 
-def get_max_tokens(paper_text):
-    """Calculate appropriate max_tokens based on input length and provider"""
-    if LLM_PROVIDER == "ollama":
-        estimated_tokens = len(paper_text.split()) * 0.75 + 2000  # 1000 token overhead
-        if estimated_tokens > 24576:
-            log_message(f"WARNING: Paper length ({estimated_tokens} tokens) may be too long for effective summarization")
-        return min(24576, int(estimated_tokens))
-    else:
-        return 200000  # Claude's maximum tokens
+# This function is no longer needed as each provider handles token limits
+# def get_max_tokens(paper_text):
+#     """Calculate appropriate max_tokens based on input length and provider"""
+#     ...
     
 def create_system_prompt(keywords):
     """Create the system prompt defining role and expertise"""
@@ -216,7 +237,9 @@ def create_user_prompt(paper_text, template, is_pdf=False):
         "</task>\n\n"
     )
     
-    if not is_pdf or LLM_PROVIDER == "ollama":
+    # Include paper text in the prompt for txt files or PDFs that need text extraction
+    # This includes Ollama, OpenAI, and Perplexity for PDFs
+    if not is_pdf or LLM_PROVIDER in ["ollama", "openai", "perplexity"]:
         base_prompt += (
             "<input>\n"
             f"Paper to summarize:\n\n"
@@ -227,23 +250,45 @@ def create_user_prompt(paper_text, template, is_pdf=False):
     return base_prompt
 
 def process_file(file_path, keywords, template):
-    """Process a file using either Claude or Ollama"""
+    """Process a file using the configured LLM provider"""
+    # Determine file type
+    is_pdf = file_path.suffix.lower() == '.pdf'
+    
+    # Check if we need to extract text from PDF
+    needs_text_extraction = LLM_PROVIDER in ["openai", "perplexity"] and is_pdf
+    
+    # Read the file content
     paper_content, error = read_input_file(file_path)
+    
+    # Log the content type to diagnose issues
+    if is_pdf:
+        log_message(f"PDF content type: {type(paper_content).__name__}")
     if error:
         return False, file_path.name, error
     
-    is_pdf = file_path.suffix.lower() == '.pdf'
-    
-    if LLM_PROVIDER == "ollama":
-        max_tokens = get_max_tokens(paper_content)
+    # Initialize the LLM provider
+    provider_config = {"model": LLM_MODEL} if LLM_MODEL else {}
+    llm_provider = create_llm_provider(LLM_PROVIDER, config=provider_config)
     
     # Create appropriate prompts
     system_prompt = create_system_prompt(keywords)
+    
+    # For OpenAI and Perplexity, we need to include the extracted text in the prompt
+    # since they don't have native PDF handling
+    include_text_in_prompt = not is_pdf or (is_pdf and (LLM_PROVIDER in ["ollama", "openai", "perplexity"]))
+    
+    # If we're including text in the prompt and the content is binary, there's a problem
+    if include_text_in_prompt and is_pdf and isinstance(paper_content, bytes) and LLM_PROVIDER in ["openai", "perplexity"]:
+        log_message("Warning: PDF text not properly extracted for prompt inclusion")
+    
     user_prompt = create_user_prompt(
-        paper_text=paper_content if not is_pdf or LLM_PROVIDER == "ollama" else "",
+        paper_text=paper_content if include_text_in_prompt else "",
         template=template,
         is_pdf=is_pdf
     )
+    
+    if is_pdf and LLM_PROVIDER in ["openai", "perplexity"]:
+        log_message(f"PDF text extraction for {LLM_PROVIDER}: text length is {len(str(paper_content)) if paper_content else 0} characters")
     
     # Write complete prompt to file for debugging
     full_prompt = f"SYSTEM PROMPT\n{system_prompt}\n\n---\n\nUSER PROMPT\n{user_prompt}"
@@ -255,65 +300,16 @@ def process_file(file_path, keywords, template):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            if LLM_PROVIDER == "ollama":
-                
-                # Ollama API call
-                data = {
-                    "model": OLLAMA_MODEL,
-                    "prompt": user_prompt,
-                    "system": system_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.2,
-                        "num_ctx": max_tokens,
-                        "num_predict": 8192,
-                        "stop": ["</input>", "</task>"]
-                    }
-                }
-
-                response = requests.post(
-                    "http://localhost:11434/api/generate",
-                    json=data
-                )
-                response.raise_for_status()
-                                
-                response_data = response.json()
-                summary_content = response_data.get('response', '')
-
-                if 'error' in response_data:
-                    raise ValueError(f"Ollama error: {response_data['error']}")
-                    
-                if not summary_content:
-                    raise ValueError("No content received from Ollama")
-
-            else:
-                # Claude API call
-                client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-                
-                messages = [{
-                    "role": "user",
-                    "content": [{"type": "text", "text": user_prompt}]
-                }]
-                
-                if is_pdf:
-                    messages[0]["content"].append({
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": base64.b64encode(paper_content).decode()
-                        }
-                    })
-                    
-                message = client.messages.create(
-                    model="claude-3-7-sonnet-20250219",
-                    temperature=0.2,
-                    max_tokens=8192,
-                    system=system_prompt,
-                    messages=messages
-                )
-                
-                summary_content = message.content[0].text
+            # Use the provider to process the document
+            # We use a lower max_tokens value for response generation (not context window)
+            # This is the maximum number of tokens the model will generate in response
+            summary_content = llm_provider.process_document(
+                content=paper_content,
+                is_pdf=is_pdf,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=8192  # This is appropriate for summary generation across models
+            )
             
             # Common post-processing
             validate_summary(summary_content)
@@ -327,13 +323,16 @@ def process_file(file_path, keywords, template):
                 return False, file_path.name, "Failed to move file"
             
         except requests.exceptions.RequestException as e:
-            error_msg = f"Attempt {attempt + 1} failed - Ollama API error: {str(e)}"
+            error_msg = f"Attempt {attempt + 1} failed - API request error: {str(e)}"
             log_message(error_msg)
-        except anthropic.APIError as e:
-            error_msg = f"Attempt {attempt + 1} failed - Claude API error: {str(e)}"
+        except ValueError as e:
+            error_msg = f"Attempt {attempt + 1} failed - Value error: {str(e)}"
+            log_message(error_msg)
+        except ImportError as e:
+            error_msg = f"Attempt {attempt + 1} failed - Missing dependency: {str(e)}"
             log_message(error_msg)
         except Exception as e:
-            error_msg = f"Attempt {attempt + 1} failed - Unexpected error: {e.__class__.__name__}: {str(e)}"
+            error_msg = f"Attempt {attempt + 1} failed - {LLM_PROVIDER} error: {e.__class__.__name__}: {str(e)}"
             log_message(error_msg)
             
         if attempt < max_retries - 1:
@@ -535,7 +534,9 @@ def main():
         
         setup_logging()
         check_environment()
-        logging.info(f"Starting paper summarisation using {LLM_PROVIDER} {OLLAMA_MODEL}")
+        
+        model_info = f" with model {LLM_MODEL}" if LLM_MODEL else ""
+        logging.info(f"Starting paper summarisation using {LLM_PROVIDER}{model_info}")
         
         INPUT_DIR.mkdir(exist_ok=True)
         OUTPUT_DIR.mkdir(exist_ok=True)
