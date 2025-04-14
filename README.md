@@ -73,10 +73,19 @@ science-paper-summariser/
    # Use Perplexity
    ./start_claude_summariser.sh perplexity
    ```
+   
+2. Place PDF or text files in the `input/` directory
+
+3. Monitor `output/` for generated summaries. Processed papers end up in `processed/`
+
+4. Stop the summariser:
+   ```bash
+   ./stop_claude_summariser.sh
+   ```
 
 ## Supported Models
 
-This tool supports a variety of LLM providers and models. Please check llm_providers.py and update as needed.
+This tool supports a variety of LLM providers and models. Please check `llm_providers.py` and update as needed.
 
 ### Claude (Anthropic)
 - `claude-3-7-sonnet-20250219` (default)
@@ -99,16 +108,8 @@ This tool supports a variety of LLM providers and models. Please check llm_provi
 
 ### Ollama
 - `qwen2.5:14b-instruct-q8_0` (default)
-- Any model available in your local Ollama installation
-
-1. Place PDF or text files in the `input/` directory
-
-2. Monitor `output/` for generated summaries. Processed papers end up in `processed/`
-
-3. Stop the summariser:
-   ```bash
-   ./stop_claude_summariser.sh
-   ```
+- `llama3.1:8b-instruct-q8_0`
+- ... any model available in your local Ollama installation
 
 
 ## Requirements

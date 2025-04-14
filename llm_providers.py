@@ -314,14 +314,9 @@ class OllamaProvider(LLMProvider):
         """Return maximum context size for Ollama model"""
         # This would ideally query the Ollama API for the model's context size
         model_contexts = {
-            "gemma3:12b": 8192, # crap
-            "phi4-mini:3.8b-fp16": 131072, # shallow
-            "granite3.2:8b-instruct-q8_0": 131072, # Bad
-            "qwen2.5:7b-instruct-q8_0": 32768, # below average
             "qwen2.5:14b-instruct-q8_0": 32768, # pretty good
-            "deepseek-r1:14b-qwen-distill-q8_0": 131072, # 
-            "mistral-small3.1:24b": 131072, # 
-            "cogito:14b-v1-preview-qwen-q8_0": 131072 # 
+            "llama3.1:8b-instruct-q8_0": 131072, # not bad
+            "qwen2.5:32b-instruct-q4_0": 32768 # 
         }
         return model_contexts.get(self.model.lower(), 8192)
     
