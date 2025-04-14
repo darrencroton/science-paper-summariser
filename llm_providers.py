@@ -235,7 +235,7 @@ class PerplexityProvider(LLMProvider):
     
     def get_default_model(self):
         """Return the default Perplexity model"""
-        return "sonar"  # Default model
+        return "r1-1776"  # Default model
 
 
 class OllamaProvider(LLMProvider):
@@ -292,13 +292,13 @@ class OllamaProvider(LLMProvider):
             "mistral:7b": 8192,
             "mistral:latest": 32000,
             "mixtral:latest": 32000,
-            "wizardlm:latest": 8192
+            "cogito:32b": 131072
         }
         return model_contexts.get(self.model.lower(), 8192)
     
     def get_default_model(self):
         """Return the default Ollama model"""
-        return "mistral:7b"
+        return "cogito:32b"
 
 
 # Factory function to create the appropriate provider

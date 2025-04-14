@@ -92,12 +92,12 @@ This tool supports a variety of LLM providers and models. Please check llm_provi
 - `gpt-3.5-turbo`
 
 ### Perplexity
-- `sonar` (default)
+- `r1-1776` (default)
+- `sonar`
 - `sonar-deep-research`
 - `sonar-reasoning-pro`
 - `sonar-reasoning`
 - `sonar-pro`
-- `r1-1776`
 
 ### Ollama
 - `mistral:7b` (default)

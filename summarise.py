@@ -290,6 +290,7 @@ def process_file(file_path, keywords, template):
             )
             
             # Common post-processing
+            summary_content = strip_preamble(summary_content)
             validate_summary(summary_content)
             save_summary(summary_content, file_path)
             
@@ -319,7 +320,25 @@ def process_file(file_path, keywords, template):
             time.sleep(wait_time)
         else:
             return False, file_path.name, error_msg
+
+def strip_preamble(summary_content):
+    """Remove any text before the paper title (which starts with '# ')"""
+    lines = summary_content.split('\n')
+    title_index = -1
     
+    # Find the first line starting with '# ' (the paper title)
+    for i, line in enumerate(lines):
+        if line.strip().startswith('# '):
+            title_index = i
+            break
+    
+    # If we found a title line, remove everything before it
+    if title_index > 0:
+        log_message(f"Removed {title_index} lines of preamble before paper title")
+        return '\n'.join(lines[title_index:])
+    
+    return summary_content  # Return unchanged if no title marker found
+
 def validate_summary(summary_content):
     """Basic validation of summary format and log results"""
     lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
