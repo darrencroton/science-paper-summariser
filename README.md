@@ -1,6 +1,6 @@
 # Science Paper Summariser
 
-A Python tool that uses LLMs (Claude, GPT, Gemini, etc.) to automatically summarise scientific papers. The tool monitors an input directory for new PDFs or text files, processes them using your chosen model, and generates markdown summaries with extensive referencing back to the source material.
+A Python tool that uses LLMs (Claude, GPT, Gemini, etc.) to automatically summarise scientific papers, following an exact template and hashtag list. The tool monitors an input directory for new PDFs or text files, processes them using your chosen model, and generates markdown summaries with extensive referencing back to the source material.
 
 ## Features
 
