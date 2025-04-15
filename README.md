@@ -56,7 +56,7 @@ science-paper-summariser/
 
 ## Usage
 
-1. Start the summariser with your preferred LLM provider:
+1. Start the summariser with your preferred LLM provider (see below for dafaults):
    ```bash
    # Use Claude (default)
    ./start_paper_summariser.sh
@@ -65,13 +65,13 @@ science-paper-summariser/
    ./start_paper_summariser.sh claude claude-3-5-sonnet-20241022
    
    # Use Ollama with optional model specification
-   ./start_paper_summariser.sh ollama mistral:7b
+   ./start_paper_summariser.sh ollama llama3.1:8b-instruct-q8_0
    
-   # Use OpenAI (GPT-4o by default for scientific papers)
+   # Use OpenAI
    ./start_paper_summariser.sh openai
    
    # Specify a different OpenAI model
-   ./start_paper_summariser.sh openai gpt-4-turbo
+   ./start_paper_summariser.sh openai gpt-4o
    
    # Use Perplexity
    ./start_paper_summariser.sh perplexity
