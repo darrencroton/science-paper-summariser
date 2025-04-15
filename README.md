@@ -121,7 +121,6 @@ This tool supports a variety of LLM providers and models. Please check `llm_prov
 
 ### Ollama
 - `qwen2.5:14b-instruct-q8_0` (default)
-- `qwen2.5:32b-instruct-q8_0`
 - `llama3.1:8b-instruct-q8_0`
 - ... any model available in your local Ollama installation
 
