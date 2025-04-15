@@ -51,7 +51,7 @@ science-paper-summariser/
 
 4. Make the start and stop scripts executable:
    ```bash
-   chmod +x start_claude_summariser.sh stop_claude_summariser.sh
+   chmod +x start_paper_summariser.sh stop_paper_summariser.sh
    ```
 
 ## Usage
@@ -59,28 +59,28 @@ science-paper-summariser/
 1. Start the summariser with your preferred LLM provider:
    ```bash
    # Use Claude (default)
-   ./start_claude_summariser.sh
+   ./start_paper_summariser.sh
    
    # Specify a different Claude model
-   ./start_claude_summariser.sh claude claude-3-5-sonnet-20241022
+   ./start_paper_summariser.sh claude claude-3-5-sonnet-20241022
    
    # Use Ollama with optional model specification
-   ./start_claude_summariser.sh ollama mistral:7b
+   ./start_paper_summariser.sh ollama mistral:7b
    
    # Use OpenAI (GPT-4o by default for scientific papers)
-   ./start_claude_summariser.sh openai
+   ./start_paper_summariser.sh openai
    
    # Specify a different OpenAI model
-   ./start_claude_summariser.sh openai gpt-4-turbo
+   ./start_paper_summariser.sh openai gpt-4-turbo
    
    # Use Perplexity
-   ./start_claude_summariser.sh perplexity
+   ./start_paper_summariser.sh perplexity
    
    # Use Google Gemini
-   ./start_claude_summariser.sh gemini
+   ./start_paper_summariser.sh gemini
    
    # Specify a different Gemini model
-   ./start_claude_summariser.sh gemini gemini-1.5-pro
+   ./start_paper_summariser.sh gemini gemini-1.5-pro
    ```
 
 2. Place PDF or text files in the `input/` directory
@@ -89,14 +89,14 @@ science-paper-summariser/
 
 4. Stop the summariser:
    ```bash
-   ./stop_claude_summariser.sh
+   ./stop_paper_summariser.sh
    ```
 
 ## Supported Models
 
 This tool supports a variety of LLM providers and models. Please check `llm_providers.py` and update as needed. 
 
-NOTE: In my experience, Claude Sonnet 3.5/3.7 gives the best results, followed by GPT 4.1. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 isn't terrible).
+NOTE: In my experience, Claude Sonnet 3.5/3.7 gives the best results, followed by GPT 4.1. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 14b isn't terrible).
 
 ### Claude (Anthropic)
 - `claude-3-7-sonnet-20250219` (default)
