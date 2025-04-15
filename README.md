@@ -94,7 +94,9 @@ science-paper-summariser/
 
 ## Supported Models
 
-This tool supports a variety of LLM providers and models. Please check `llm_providers.py` and update as needed.
+This tool supports a variety of LLM providers and models. Please check `llm_providers.py` and update as needed. 
+
+NOTE: In my experience, Claude Sonnet 3.5/3.7 gives the best results, followed by GPT 4.1. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 isn't terrible).
 
 ### Claude (Anthropic)
 - `claude-3-7-sonnet-20250219` (default)
