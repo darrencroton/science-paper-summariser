@@ -56,7 +56,7 @@ science-paper-summariser/
 
 ## Usage
 
-1. Start the summariser with your preferred LLM provider (see below for dafaults):
+1. Start the summariser with your preferred LLM provider (see below for defaults):
    ```bash
    # Use Claude (default)
    ./start_paper_summariser.sh
