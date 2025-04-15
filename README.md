@@ -104,7 +104,10 @@ This tool supports a variety of LLM providers and models. Please check `llm_prov
 - `claude-3-haiku-20240307`
 
 ### OpenAI
-- `gpt-4o` (default)
+- `gpt-4.1` (default)
+- `gpt-4.1-mini`
+- `gpt-4.1-nano`
+- `gpt-4o`
 - `gpt-4o-mini`
 
 ### Perplexity

@@ -175,13 +175,16 @@ class OpenAIProvider(LLMProvider):
         """Return maximum context size for OpenAI model"""
         model_contexts = {
             "gpt-4o": 128000,
-            "gpt-4o-mini": 128000
+            "gpt-4o-mini": 128000, 
+            "gpt-4.1": 1047576, 
+            "gpt-4.1-mini": 1047576, 
+            "gpt-4.1-nano": 1047576
         }
         return model_contexts.get(self.model, 16385)
     
     def get_default_model(self):
         """Return the default OpenAI model for scientific PDF summarization"""
-        return "gpt-4o"  # Currently the best model for scientific content with PDF support
+        return "gpt-4.1"
 
 
 class PerplexityProvider(LLMProvider):
@@ -262,7 +265,7 @@ class PerplexityProvider(LLMProvider):
     
     def get_default_model(self):
         """Return the default Perplexity model"""
-        return "r1-1776"  # Default model
+        return "r1-1776"
 
 
 class GeminiProvider(LLMProvider):
@@ -368,7 +371,7 @@ class GeminiProvider(LLMProvider):
     
     def get_default_model(self):
         """Return the default Gemini model"""
-        return "gemini-2.5-pro-exp-03-25"  # Use Gemini 1.5 Pro as default (most stable)
+        return "gemini-2.5-pro-exp-03-25"
 
 
 class OllamaProvider(LLMProvider):
