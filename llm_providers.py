@@ -365,7 +365,8 @@ class GeminiProvider(LLMProvider):
         # Gemini models and their context sizes
         model_contexts = {
             "gemini-2.5-pro-exp-03-25": 1048576, 
-            "gemini-1.5-flash-002": 1048576
+            "gemini-2.0-flash": 1048576,
+            "gemini-1.5-pro": 1048576
         }
         return model_contexts.get(self.model, 32768)  # Default to 32K if unknown
     

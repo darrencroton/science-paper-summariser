@@ -120,7 +120,8 @@ This tool supports a variety of LLM providers and models. Please check `llm_prov
 
 ### Google Gemini
 - `gemini-2.5-pro-exp-03-25` (default)
-- `gemini-1.5-flash-002`
+- `gemini-2.0-flash`
+- `gemini-1.5-pro`
 
 ### Ollama
 - `qwen2.5:14b-instruct-q8_0` (default)
