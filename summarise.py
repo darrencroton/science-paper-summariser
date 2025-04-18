@@ -1,3 +1,27 @@
+"""
+Scientific Paper Summarizer
+
+This script continuously monitors a directory for PDF or text files containing scientific papers,
+processes them with an LLM provider, and creates structured summaries following a
+specific template. The system supports multiple LLM providers through a pluggable
+architecture and provides extensive validation and error handling.
+
+Usage:
+    python summarise.py [provider] [model]
+    
+    provider: LLM provider to use (claude, openai, perplexity, gemini, ollama)
+              defaults to 'claude' if not specified
+    model:    Optional model name specific to the chosen provider
+              if not specified, the provider default is used
+
+Directory Structure:
+    input/       - Place papers to be summarized here (.pdf or .txt)
+    output/      - Generated summaries are saved here (.md)
+    processed/   - Successfully processed papers are moved here
+    logs/        - Processing logs and error information
+    project_knowledge/ - Templates and domain-specific knowledge
+"""
+
 import os
 import sys
 import re
@@ -14,16 +38,18 @@ from marker.output import text_from_rendered
 from marker.config.parser import ConfigParser
 from llm_providers import create_llm_provider
 
-# Load environment variables
+# ===== CONFIGURATION AND SETUP =====
+
+# Load environment variables from .env file
 load_dotenv()
 
-# Define LLM provider
+# Define LLM provider from command line args or use default
 LLM_PROVIDER = sys.argv[1] if len(sys.argv) > 1 else 'claude'
 
 # Define the provider-specific model (if provided)
 LLM_MODEL = sys.argv[2] if len(sys.argv) > 2 else None
 
-# Define absolute paths
+# Define absolute paths for directory structure
 SCRIPT_DIR = Path(__file__).parent.absolute()
 INPUT_DIR = SCRIPT_DIR / "input"
 OUTPUT_DIR = SCRIPT_DIR / "output"
@@ -33,13 +59,24 @@ PROGRESS_FILE = LOGS_DIR / "completed.log"
 FAILED_FILE = LOGS_DIR / "failed.log"
 KNOWLEDGE_DIR = SCRIPT_DIR / "project_knowledge"
 
+# ===== LOGGING AND ENVIRONMENT FUNCTIONS =====
+
 def check_environment():
-    """Check required environment variables are set"""
-    # Provider-specific checks are now handled in the provider classes
+    """
+    Check that required environment variables and dependencies are available.
+    Provider-specific checks are handled in the respective provider classes.
+    """
     pass
 
 def setup_logging():
-    """Set up system-wide logging"""
+    """
+    Configure logging to write to both a file and the console.
+    
+    Creates a logging configuration that:
+    - Timestamps each message
+    - Logs at INFO level and above
+    - Outputs to both a log file and the terminal
+    """
     LOGS_DIR.mkdir(exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -52,38 +89,99 @@ def setup_logging():
     )
 
 def log_message(message):
-    """Write a message to system log"""
+    """
+    Write a message to the system log.
+    
+    Args:
+        message (str): The message to log
+    """
     logging.info(message)
 
+# ===== PROGRESS TRACKING FUNCTIONS =====
+
 def load_progress():
-    """Load progress of processed files"""
+    """
+    Load list of previously processed files from the completed.log file.
+    
+    Returns:
+        set: Set of filenames that have already been processed
+    """
     if PROGRESS_FILE.exists():
         with open(PROGRESS_FILE, 'r') as f:
             return {line.strip() for line in f if line.strip()}
     return set()
 
 def load_failed_files():
-    """Load list of permanently failed files"""
+    """
+    Load list of files that permanently failed processing.
+    
+    Returns:
+        set: Set of filenames that have failed processing and shouldn't be retried
+    """
     if FAILED_FILE.exists():
         with open(FAILED_FILE, 'r') as f:
             return {line.strip().split('|')[0] for line in f if line.strip()}
     return set()
 
 def save_progress(processed_files):
-    """Save progress of processed files"""
+    """
+    Save the current list of processed files to completed.log.
+    
+    Args:
+        processed_files (set): Set of successfully processed filenames
+    """
     with open(PROGRESS_FILE, 'w') as f:
         for filename in sorted(processed_files):
             f.write(f"{filename}\n")
 
 def add_to_failed_files(filename, error):
-    """Add a file to the permanently failed list with timestamp and error"""
+    """
+    Add a file to the permanently failed list with timestamp and error details.
+    
+    Args:
+        filename (str): Name of the file that failed processing
+        error (str): Error message or reason for failure
+    """
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with open(FAILED_FILE, 'a') as f:
         f.write(f"{filename}|{timestamp}|{error}\n")
     log_message(f"Added {filename} to failed files list - will be skipped in future processing attempts")
 
+def get_pending_files(input_dir, progress, failed):
+    """
+    Get list of unprocessed files, excluding previously processed and failed files.
+    
+    Args:
+        input_dir (Path): Directory to scan for new files
+        progress (set): Set of already processed filenames
+        failed (set): Set of permanently failed filenames
+        
+    Returns:
+        list: List of Path objects for files that need processing
+    """
+    return [
+        f for f in input_dir.glob("*.*") 
+        if f.suffix.lower() in ['.pdf', '.txt'] 
+        and f.name not in progress
+        and f.name not in failed
+    ]
+
+# ===== PROJECT KNOWLEDGE FUNCTIONS =====
+
 def read_project_knowledge():
-    """Read all project knowledge files"""
+    """
+    Read domain-specific knowledge files for use in prompt construction.
+    
+    Reads:
+    - astronomy-keywords.txt: Contains domain-specific terminology
+    - paper-summary-template.md: Template for generating consistent summaries
+    
+    Returns:
+        tuple: (keywords string, template string)
+        
+    Raises:
+        Exception: If knowledge files cannot be read
+    """
     try:
         with open(KNOWLEDGE_DIR / "astronomy-keywords.txt") as f:
             keywords = f.read()
@@ -96,8 +194,24 @@ def read_project_knowledge():
         logging.error(f"Failed to read project knowledge files: {str(e)}")
         raise
 
+# ===== FILE PROCESSING FUNCTIONS =====
+
 def read_input_file(file_path: Path, llm_provider):
-    """Read content from either PDF or text file with provider-specific handling"""
+    """
+    Read and process input file based on file type and provider capabilities.
+    
+    Handles both text files and PDFs, with special handling for providers
+    that support direct PDF input vs. those requiring text extraction.
+    
+    Args:
+        file_path (Path): Path to the input file
+        llm_provider (LLMProvider): Provider instance to check capabilities
+        
+    Returns:
+        tuple: (content, error_message)
+            - content: File contents as text or binary data
+            - error_message: Error message if reading failed, None if successful
+    """
     try:
         # Check file size (100MB limit)
         file_size = file_path.stat().st_size
@@ -107,11 +221,12 @@ def read_input_file(file_path: Path, llm_provider):
         if file_path.suffix.lower() == '.pdf':
             # Check if provider supports direct PDF input
             if llm_provider.supports_direct_pdf():
-                # Direct binary reading approach for providers that support PDFs directly
+                # Read PDF as binary for providers that support direct PDF processing
                 with open(file_path, 'rb') as f:
                     return f.read(), None
             else:
                 try:
+                    # For providers that need text extraction, use marker library
                     # Configure marker for text extraction
                     config = {
                         "output_format": "markdown",
@@ -130,7 +245,7 @@ def read_input_file(file_path: Path, llm_provider):
                     
                     config_parser = ConfigParser(config)
                     
-                    # Initialize converter
+                    # Initialize converter with appropriate configuration
                     converter_kwargs = {
                         "config": config_parser.generate_config_dict(),
                         "artifact_dict": create_model_dict(),
@@ -159,9 +274,24 @@ def read_input_file(file_path: Path, llm_provider):
                 
     except Exception as e:
         return None, f"File read error: {str(e)}"
+
+# ===== PROMPT CONSTRUCTION FUNCTIONS =====
         
 def create_system_prompt(keywords):
-    """Create the system prompt defining role and expertise"""
+    """
+    Create the system prompt defining role and expertise.
+    
+    Builds a comprehensive system prompt that:
+    - Defines the LLM's role as an expert in astrophysics
+    - Sets clear rules for output formatting and citation standards
+    - Provides domain knowledge from the astronomy keywords file
+    
+    Args:
+        keywords (str): Domain-specific terminology from knowledge file
+        
+    Returns:
+        str: Formatted system prompt
+    """
     return (
         "<role>\n"
         "You are an esteemed professor of astrophysics at Harvard University "
@@ -191,7 +321,24 @@ def create_system_prompt(keywords):
     )
 
 def create_user_prompt(paper_text, template, is_pdf=False):
-    """Create the user prompt with specific task instructions"""
+    """
+    Create the user prompt with specific task instructions.
+    
+    Builds a comprehensive user prompt that:
+    - Defines the exact summarization task
+    - Specifies formatting requirements in detail
+    - Includes the paper template structure
+    - Provides guidance on tag generation
+    - Optionally includes the paper text for non-PDF providers
+    
+    Args:
+        paper_text (str or bytes): The paper content if needed in the prompt
+        template (str): The summary template structure
+        is_pdf (bool): Whether the input is a PDF document
+        
+    Returns:
+        str: Formatted user prompt
+    """
     base_prompt = (
         "<task>\n"
         "Summarize this research paper following these EXACT requirements:\n\n"
@@ -230,7 +377,28 @@ def create_user_prompt(paper_text, template, is_pdf=False):
     return base_prompt
 
 def process_file(file_path, keywords, template):
-    """Process a file using the configured LLM provider"""
+    """
+    Process a single file through the LLM pipeline.
+    
+    Main processing function that:
+    1. Initializes the appropriate LLM provider
+    2. Reads the file content based on provider capabilities
+    3. Constructs appropriate prompts
+    4. Sends the content to the LLM for processing
+    5. Validates and saves the output
+    6. Moves the processed file to the done directory
+    
+    Args:
+        file_path (Path): Path to the file to process
+        keywords (str): Domain-specific terminology for prompt construction
+        template (str): Summary template structure
+        
+    Returns:
+        tuple: (success, filename, error_message)
+            - success (bool): Whether processing succeeded
+            - filename (str): Name of the processed file
+            - error_message (str or None): Error message if processing failed
+    """
     # Determine file type
     is_pdf = file_path.suffix.lower() == '.pdf'
     
@@ -275,18 +443,17 @@ def process_file(file_path, keywords, template):
         f.write(full_prompt)
     log_message(f"Full prompt written to {prompt_file}")
 
+    # Process with retry logic
     max_retries = 3
     for attempt in range(max_retries):
         try:
             # Use the provider to process the document
-            # We use a lower max_tokens value for response generation (not context window)
-            # This is the maximum number of tokens the model will generate in response
             summary_content = llm_provider.process_document(
                 content=paper_content,
                 is_pdf=is_pdf,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                max_tokens=8192  # This is appropriate for summary generation across models
+                max_tokens=8192  # Appropriate for summary generation across models
             )
             
             # Common post-processing
@@ -318,6 +485,7 @@ def process_file(file_path, keywords, template):
             error_msg = f"Attempt {attempt + 1} failed - {provider_name} error: {e.__class__.__name__}: {str(e)}"
             log_message(error_msg)
             
+        # Implement exponential backoff for retries
         if attempt < max_retries - 1:
             wait_time = 2 ** attempt
             log_message(f"Waiting {wait_time} seconds before retry...")
@@ -325,8 +493,21 @@ def process_file(file_path, keywords, template):
         else:
             return False, file_path.name, error_msg
 
+# ===== OUTPUT PROCESSING FUNCTIONS =====
+
 def strip_preamble(summary_content):
-    """Remove any text before the paper title (which starts with '# ')"""
+    """
+    Remove any text before the paper title (which must start with '# ').
+    
+    Some LLM providers may include preamble text like "Here's the summary..."
+    that needs to be removed for clean output.
+    
+    Args:
+        summary_content (str): Raw summary from LLM
+        
+    Returns:
+        str: Summary with preamble removed
+    """
     lines = summary_content.split('\n')
     title_index = -1
     
@@ -344,10 +525,26 @@ def strip_preamble(summary_content):
     return summary_content  # Return unchanged if no title marker found
 
 def validate_summary(summary_content):
-    """Basic validation of summary format and log results"""
+    """
+    Perform validation checks on the generated summary.
+    
+    Checks multiple aspects of the summary against our required format:
+    - Title formatting
+    - Year presence
+    - Author list completeness
+    - Bullet/footnote correspondence
+    - Quote formatting
+    - Required sections (Glossary, Tags)
+    
+    Args:
+        summary_content (str): Summary to validate
+        
+    Returns:
+        None: Results are logged but not returned
+    """
     lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
     
-    # Check if first line starts with # 
+    # Check if first line starts with # (title heading)
     start_with_title = lines[0].startswith('# ')
     
     # Check for year in first few lines
@@ -357,7 +554,7 @@ def validate_summary(summary_content):
             year_found = True
             break
     
-    # Check for et al in authors
+    # Check for "et al." in authors line
     author_complete = not any('et al' in line.lower() 
                             for line in lines[:5] if line.startswith('Authors:'))
 
@@ -399,6 +596,7 @@ def validate_summary(summary_content):
     log_message(f"- Has Tags section: {has_tags}")
     log_message(f"- Has proper tag format: {has_two_tag_lines}")
 
+    # Log warnings for validation failures
     if not start_with_title:
         log_message(f"WARNING: Summary does not start with title heading")
     if not year_found:
@@ -415,7 +613,19 @@ def validate_summary(summary_content):
         log_message("WARNING: Missing or improperly formatted Tags section")
 
 def move_to_done(file_path, summary_content):
-    """Move processed file to done directory with metadata-based name"""
+    """
+    Move processed file to the done directory with metadata-based name.
+    
+    After successful processing, moves the input file to the processed directory
+    with a standardized filename based on extracted metadata.
+    
+    Args:
+        file_path (Path): Path to the original input file
+        summary_content (str): Generated summary text
+        
+    Returns:
+        Path or None: Path to moved file, or None if move failed
+    """
     try:
         DONE_DIR.mkdir(exist_ok=True)
         
@@ -438,7 +648,20 @@ def move_to_done(file_path, summary_content):
         return None
     
 def extract_metadata(summary_content):
-    """Extract author, year, and title from summary content"""
+    """
+    Extract author, year, and title from summary content.
+    
+    Parses the summary text to extract key metadata for filename generation.
+    
+    Args:
+        summary_content (str): Generated summary text
+        
+    Returns:
+        tuple: (title, authors, year)
+            - title (str): Paper title
+            - authors (list): List of author surnames
+            - year (str or None): Publication year
+    """
     lines = [l.strip() for l in summary_content.split('\n') if l.strip()]
     title = lines[0].replace('# ', '', 1) if lines[0].startswith('# ') else ''
     year = None
@@ -449,18 +672,27 @@ def extract_metadata(summary_content):
             author_line = line.replace('Authors: ', '')
             for part in author_line.split(','):
                 part = part.strip()
-                if '.' in part:
+                if '.' in part:  # Look for initials which indicate an author
                     surname = part.split()[0].strip()
                     if surname:
                         authors.append(surname)
         
+        # Extract year from publication line
         if year_match := re.search(r'\b(19|20)\d{2}\b', line):
             year = year_match.group()
     
     return title, authors, year
 
 def format_authors(authors):
-    """Format author list according to specified rules"""
+    """
+    Format author list for filename according to specified rules.
+    
+    Args:
+        authors (list): List of author surnames
+        
+    Returns:
+        str: Formatted author string (e.g., "Smith", "Smith and Jones", "Smith et al.")
+    """
     if not authors:
         return "Unknown"
     
@@ -472,7 +704,19 @@ def format_authors(authors):
         return f"{authors[0]} et al."
 
 def sanitize_filename(filename):
-    """Replace filesystem-unfriendly characters and handle length limits"""
+    """
+    Replace filesystem-unfriendly characters and handle length limits.
+    
+    Makes filenames safe for all filesystems by:
+    - Removing unsafe characters
+    - Limiting filename length to 255 bytes
+    
+    Args:
+        filename (str): Raw filename to sanitize
+        
+    Returns:
+        str: Sanitized filename safe for all filesystems
+    """
     # Replace filesystem-unfriendly characters with safe alternatives
     unsafe_chars = r'<>:"/\\|?*'
     for char in unsafe_chars:
@@ -490,14 +734,33 @@ def sanitize_filename(filename):
     return filename.strip()
 
 def create_summary_filename(title, authors, year):
-    """Create a filename from metadata"""
+    """
+    Create a standardized filename from metadata.
+    
+    Args:
+        title (str): Paper title
+        authors (list): List of author surnames
+        year (str or None): Publication year
+        
+    Returns:
+        str or None: Formatted filename, or None if year is missing
+    """
     if not year:
         log_message("WARNING: No year found in summary")
         return None
     return sanitize_filename(f"{format_authors(authors)} - {year} - {title[:100].strip()}.md")
 
 def get_filename_with_fallback(summary, input_path):
-    """Create filename from metadata with fallback to original"""
+    """
+    Create filename from metadata with fallback to original name.
+    
+    Args:
+        summary (str): Generated summary text
+        input_path (Path): Original input file path
+        
+    Returns:
+        str: Best available filename for the summary
+    """
     title, authors, year = extract_metadata(summary)
     filename = create_summary_filename(title, authors, year)
     
@@ -508,7 +771,13 @@ def get_filename_with_fallback(summary, input_path):
     return filename
 
 def save_summary(summary, input_path):
-    """Save the summary to a file"""
+    """
+    Save the generated summary to a file.
+    
+    Args:
+        summary (str): Generated summary text
+        input_path (Path): Path to the original input file
+    """
     filename = get_filename_with_fallback(summary, input_path)
     output_path = OUTPUT_DIR / filename
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -520,30 +789,31 @@ def save_summary(summary, input_path):
     except Exception as e:
         log_message(f"Error saving summary: {str(e)}")
 
-def get_pending_files(input_dir, progress, failed):
-    """Get list of unprocessed files, excluding permanently failed files"""
-    return [
-        f for f in input_dir.glob("*.*") 
-        if f.suffix.lower() in ['.pdf', '.txt'] 
-        and f.name not in progress
-        and f.name not in failed
-    ]
+# ===== MAIN EXECUTION =====
 
 def main():
-        
+    """
+    Main entry point for the paper summarization process.
+    
+    Initializes the system, sets up directories, and continuously monitors
+    the input directory for new files to process.
+    """
     try:
-        
+        # Setup environment
         setup_logging()
         check_environment()
         
+        # Log startup information
         model_info = f" with model {LLM_MODEL}" if LLM_MODEL else ""
         logging.info(f"Starting paper summarisation using {LLM_PROVIDER}{model_info}")
         
+        # Create required directories
         INPUT_DIR.mkdir(exist_ok=True)
         OUTPUT_DIR.mkdir(exist_ok=True)
         DONE_DIR.mkdir(exist_ok=True)
         KNOWLEDGE_DIR.mkdir(exist_ok=True)
         
+        # Load project knowledge and tracking data
         keywords, template = read_project_knowledge()
         progress = load_progress()
         failed_files = load_failed_files()
@@ -555,6 +825,7 @@ def main():
         
         waiting_message_shown = False
         
+        # Main processing loop
         while True:
             try:
                 pending_files = get_pending_files(INPUT_DIR, progress, failed_files)
@@ -564,6 +835,7 @@ def main():
                     waiting_message_shown = False
                     logging.info(f"Processing file: {file_path.name}")
                     
+                    # Process the file
                     success, filename, error = process_file(
                         file_path, keywords, template
                     )
@@ -583,10 +855,12 @@ def main():
                     time.sleep(10)
                 
                 elif not waiting_message_shown:
+                    # Show waiting message only once when queue becomes empty
                     time.sleep(10)
                     logging.info("No files in queue. Waiting for new files...\n")
                     waiting_message_shown = True
                 else:
+                    # Short sleep when idle to avoid CPU usage
                     time.sleep(2)
                     
             except KeyboardInterrupt:
