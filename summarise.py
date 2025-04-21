@@ -217,7 +217,7 @@ def create_system_prompt(keywords):
     # This prompt sets the context and constraints for the LLM's summarization task.
     return (
         "<role>\n"
-        # Role definition... (content unchanged)
+        # Role definition... 
         "You are an esteemed professor of astrophysics at Harvard University "
         "specializing in analyzing research papers. Your expertise includes:\n"
         "- Identifying key scientific results and their significance\n"
@@ -226,7 +226,7 @@ def create_system_prompt(keywords):
         "- Using LaTeX for mathematical expressions\n"
         "</role>\n\n"
         "<rules>\n"
-        # Strict rules for output format and content... (content unchanged)
+        # Strict rules for output format and content... 
         "1. Write only in UK English using clear technical language\n"
         "2. Use markdown formatting throughout\n"
         "3. Use LaTeX for all mathematical expressions\n"
@@ -254,10 +254,10 @@ def create_user_prompt(paper_text, template, is_pdf=False):
     # Defines the specific task and provides the output structure template
     base_prompt = (
         "<task>\n"
-        # Task instructions... (content unchanged)
+        # Task instructions... 
         "Summarize this research paper following these EXACT requirements:\n\n"
         "<format>\n"
-        # Formatting requirements... (content unchanged)
+        # Formatting requirements... 
         "1. THE VERY FIRST LINE must be the paper title as '# Title'\n"
         "2. NO TEXT before the title - not even a greeting\n"
         "3. Below title, exactly one blank line, then:\n"
@@ -274,10 +274,10 @@ def create_user_prompt(paper_text, template, is_pdf=False):
         f"Use this exact structure:\n{template}\n"
         "</template>\n\n"
         "<tags>\n"
-        # Specific instructions for the Tags section... (content unchanged)
+        # Specific instructions for the Tags section... 
         "The Tags section must have two parts:\n"
         "1. First line: Hashtags for telescopes, surveys, datasets, models (proper nouns only)\n"
-        "2. Second line: Science area hashtags (use ONLY provided keywords)\n"
+        "2. Second line: Science area hashtags (use ONLY provided keywords, only the best ones)\n"
         "</tags>\n"
         "</task>\n\n"
     )

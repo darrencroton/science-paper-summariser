@@ -23,8 +23,7 @@ science-paper-summariser/
 ├── logs/           # Processing history and errors
 └── project_knowledge/
     ├── astronomy-keywords.txt
-    ├── paper-summary-template.md
-    └── prompt.txt
+    └── paper-summary-template.md
 ```
 
 ## Setup
@@ -48,6 +47,7 @@ science-paper-summariser/
    ```bash
    mkdir -p input output processed logs
    ```
+   Tip: create symbolic links to where you want to read/write the input/output
 
 4. Make the start and stop scripts executable:
    ```bash
@@ -122,6 +122,7 @@ NOTE: In my experience, Claude Sonnet 3.5/3.7 gives the best results, followed b
 
 ### Google Gemini
 - `gemini-2.5-pro-exp-03-25` (default)
+- `gemini-2.5-flash-preview-04-17`
 - `gemini-2.0-flash`
 - `gemini-1.5-pro`
 

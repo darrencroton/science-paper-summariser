@@ -2,44 +2,45 @@
 
 Authors: Smith A., Rando B., etc
 
-Published: Month Year ([Link](https://arxiv.org/abs/xxxx.xxxxx))
+Published: Month Year ([Link](<URL to paper>) <- ONLY if you see the arxiv or doi identifier! ...otherwise no link)
 
-## Key Ideas
+## Key Ideas (up to 3 bullets)
 
 - Blah blah blah[^1]
 - Blah blah blah[^2]  
+- Blah blah blah[^3]  
 
 ## Introduction
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Data
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Method
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Results
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Discussion
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Weaknesses
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Conclusions
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Future work
 
-- More bullets each with a footnote
+- No more than 3 bullets, each with a footnote
 
 ## Glossary 
 
@@ -47,8 +48,9 @@ A table here, 2 columns titled Term and Definition
 
 ## Tags
 
-#Hashtag1 #hashtag2 …
-#Hashtag3 #hashtag3 …
+#Hashtag1 #hashtag2 … (no more than 5)
+
+#Hashtag3 #hashtag3 … (no more than 5)
 
 ## References
 
