@@ -8,12 +8,8 @@ including Claude, OpenAI, Perplexity, Gemini, and Ollama.
 import os
 import base64
 import requests
-import time
 import logging
-import json
 from typing import Dict, Any, Tuple, Optional, List, Union
-
-# Do not set up logging here as it will interfere with the application's logging configuration
 
 
 class LLMProvider:

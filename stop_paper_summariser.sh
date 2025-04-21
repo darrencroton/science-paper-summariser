@@ -1,22 +1,28 @@
 #!/bin/zsh
 
-cd "${0:a:h}"  # Change to script directory using zsh syntax
+# Change to the script's directory to ensure relative paths work
+cd "${0:a:h}"
 
-# Stop paper summarisation from PID file
+# Stop the main paper summarisation process using its PID file
 if [ -f logs/process.pid ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Stopping paper summarisation process $(cat logs/process.pid)" >> logs/history.log
-    kill $(cat logs/process.pid) 2>/dev/null
+    MAIN_PID=$(cat logs/process.pid)
+    if [ -n "$MAIN_PID" ] && ps -p $MAIN_PID > /dev/null; then
+        echo "Stopping paper summariser process (PID: $MAIN_PID)..."
+        # Send SIGTERM (graceful shutdown signal)
+        kill $MAIN_PID 2>/dev/null
+        # Allow a short time for graceful shutdown before removing PID file
+        sleep 2
+    else
+        echo "PID file found, but process $MAIN_PID not running or PID invalid."
+    fi
+    # Remove the PID file regardless of whether the process was running
     rm logs/process.pid
+    echo "PID file removed."
+else
+    echo "No active PID file found (logs/process.pid). Is the summariser running?"
+    # Optional: You could add the ps aux grep kill loop here as a fallback
+    # if you suspect orphaned processes might occur often, but try without first.
 fi
 
-# Also check for any other running summarise.py processes
-OTHER_PIDS=$(ps aux | grep "[p]ython3 summarise.py" | awk '{print $2}')
-if [ ! -z "$OTHER_PIDS" ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Found additional summarisation processes: $OTHER_PIDS" >> logs/history.log
-    for pid in $OTHER_PIDS; do
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Stopping additional process $pid" >> logs/history.log
-        kill $pid 2>/dev/null
-    done
-fi
-
-echo "$(date '+%Y-%m-%d %H:%M:%S') - All paper summarisation processes stopped\n" >> logs/history.log
+# The Python script's signal handler should log the actual shutdown status to history.log
+echo "Stop script finished."
