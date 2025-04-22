@@ -17,7 +17,7 @@ from llm_providers import create_llm_provider # Factory for creating LLM provide
 load_dotenv()
 
 # Determine LLM provider and optional model from command-line arguments
-LLM_PROVIDER = sys.argv[1] if len(sys.argv) > 1 else 'claude' # Default to 'claude'
+LLM_PROVIDER = sys.argv[1] if len(sys.argv) > 1 else 'gemini' # Default to 'claude'
 LLM_MODEL = sys.argv[2] if len(sys.argv) > 2 else None # Optional model override
 
 # Define key directory paths relative to the script location
