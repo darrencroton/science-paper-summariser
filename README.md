@@ -98,7 +98,7 @@ This tool supports a variety of LLM providers and models. Please check `llm_prov
 
 NOTE: In my experience, Claude Sonnet 3.5/3.7, Gemini 2.5 Pro, and GPT 4.1 give the best results. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 14b isn't terrible).
 
-### Claude (Anthropic)
+### Claude
 - `claude-3-7-sonnet-20250219` (default)
 - `claude-3-5-sonnet-20241022`
 - `claude-3-opus-20240229`
