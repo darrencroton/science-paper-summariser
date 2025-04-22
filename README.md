@@ -58,8 +58,11 @@ science-paper-summariser/
 
 1. Start the summariser with your preferred LLM provider (see below for defaults):
    ```bash
-   # Use Claude (default)
+   # Use Gemini (default)
    ./start_paper_summariser.sh
+
+   # Use Claude
+   ./start_paper_summariser.sh claude
    
    # Specify a different Claude model
    ./start_paper_summariser.sh claude claude-3-5-sonnet-20241022
@@ -75,9 +78,6 @@ science-paper-summariser/
    
    # Use Perplexity
    ./start_paper_summariser.sh perplexity
-   
-   # Use Google Gemini
-   ./start_paper_summariser.sh gemini
    
    # Specify a different Gemini model
    ./start_paper_summariser.sh gemini gemini-1.5-pro
@@ -96,7 +96,7 @@ science-paper-summariser/
 
 This tool supports a variety of LLM providers and models. Please check `llm_providers.py` and update as needed. 
 
-NOTE: In my experience, Claude Sonnet 3.5/3.7 gives the best results, followed by GPT 4.1. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 14b isn't terrible).
+NOTE: In my experience, Claude Sonnet 3.5/3.7, Gemini 2.5 Pro, and GPT 4.1 give the best results. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 14b isn't terrible).
 
 ### Claude (Anthropic)
 - `claude-3-7-sonnet-20250219` (default)
@@ -120,7 +120,7 @@ NOTE: In my experience, Claude Sonnet 3.5/3.7 gives the best results, followed b
 - `sonar-reasoning`
 - `sonar-pro`
 
-### Google Gemini
+### Google Gemini (default)
 - `gemini-2.5-pro-exp-03-25` (default)
 - `gemini-2.5-flash-preview-04-17`
 - `gemini-2.0-flash`
