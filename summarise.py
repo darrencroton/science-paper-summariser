@@ -771,12 +771,12 @@ def main():
 
                     # Short pause before checking for the next file, unless shutting down
                     if not shutdown_requested:
-                        logging.info("--- Checking for next file ---")
+                        logging.info("--- Checking for next file ---\n")
                         time.sleep(2) # Short pause
 
                 elif not waiting_message_shown:
                     # No pending files found, show waiting message once
-                    logging.info("No files in queue. Waiting...")
+                    logging.info("No files in queue. Waiting...\n")
                     waiting_message_shown = True
                     # Wait for ~10 seconds, but check for shutdown signal periodically
                     wait_start = time.monotonic()
