@@ -58,17 +58,17 @@ science-paper-summariser/
 
 1. Start the summariser with your preferred LLM provider (see below for defaults):
    ```bash
-   # Use Gemini (default)
-   ./start_paper_summariser.sh
-
-   # Use Claude
+   # Use Claude (default)
    ./start_paper_summariser.sh claude
    
    # Specify a different Claude model
    ./start_paper_summariser.sh claude claude-3-5-sonnet-20241022
    
-   # Use Ollama with optional model specification
-   ./start_paper_summariser.sh ollama llama3.1:8b-instruct-q8_0
+   # Use Gemini
+   ./start_paper_summariser.sh
+   
+   # Specify a different Gemini model
+   ./start_paper_summariser.sh gemini gemini-1.5-pro
    
    # Use OpenAI
    ./start_paper_summariser.sh openai
@@ -78,9 +78,9 @@ science-paper-summariser/
    
    # Use Perplexity
    ./start_paper_summariser.sh perplexity
-   
-   # Specify a different Gemini model
-   ./start_paper_summariser.sh gemini gemini-1.5-pro
+
+   # Use Ollama with optional model specification
+   ./start_paper_summariser.sh ollama llama3.1:8b-instruct-q8_0
    ```
 
 2. Place PDF or text files in the `input/` directory
@@ -96,14 +96,18 @@ science-paper-summariser/
 
 This tool supports a variety of LLM providers and models. Please check `llm_providers.py` and update as needed. 
 
-NOTE: In my experience, Claude Sonnet 3.5/3.7, Gemini 2.5 Pro, and GPT 4.1 give the best results. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 14b isn't terrible).
+NOTE: In my experience, Claude Sonnet 4, Gemini 2.5 Pro, and GPT 4.1 give the best results. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 14b isn't terrible).
 
-### Claude
-- `claude-3-7-sonnet-20250219` (default)
-- `claude-3-5-sonnet-20241022`
-- `claude-3-opus-20240229`
-- `claude-3-sonnet-20240229`
-- `claude-3-haiku-20240307`
+### Claude (default)
+- `claude-sonnet-4-0` (default)
+- `claude-sonnet-4-latest`
+- `claude-haiku-3-5-latest`
+
+### Google Gemini
+- `gemini-2.5-pro` (default)
+- `gemini-2.5-flash`
+- `gemini-2.0-flash`
+- `gemini-1.5-pro`
 
 ### OpenAI
 - `gpt-4.1` (default)
@@ -119,12 +123,6 @@ NOTE: In my experience, Claude Sonnet 3.5/3.7, Gemini 2.5 Pro, and GPT 4.1 give 
 - `sonar-reasoning-pro`
 - `sonar-reasoning`
 - `sonar-pro`
-
-### Google Gemini (default)
-- `gemini-2.5-pro-exp-03-25` (default)
-- `gemini-2.5-flash-preview-04-17`
-- `gemini-2.0-flash`
-- `gemini-1.5-pro`
 
 ### Ollama
 - `qwen2.5:14b-instruct-q8_0` (default)

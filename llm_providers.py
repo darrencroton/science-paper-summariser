@@ -86,17 +86,15 @@ class ClaudeProvider(LLMProvider):
     def get_max_context_size(self):
         """Return maximum context size for Claude model"""
         model_contexts = {
-            "claude-3-7-sonnet-20250219": 200000,
-            "claude-3-5-sonnet-20241022": 200000,
-            "claude-3-opus-20240229": 200000,
-            "claude-3-haiku-20240307": 200000,
-            "claude-3-sonnet-20240229": 200000
+            "claude-sonnet-4-0": 200000,
+            "claude-sonnet-3-7-latest": 200000,
+            "claude-haiku-3-5-latest": 200000
         }
         return model_contexts.get(self.model, 200000)
     
     def get_default_model(self):
         """Return the default Claude model"""
-        return "claude-3-7-sonnet-20250219"
+        return "claude-sonnet-4-0"
 
 
 class OpenAIProvider(LLMProvider):
@@ -360,8 +358,8 @@ class GeminiProvider(LLMProvider):
         """Return maximum context size for Gemini model"""
         # Gemini models and their context sizes
         model_contexts = {
-            "gemini-2.5-pro-exp-03-25": 1048576, 
-            "gemini-2.5-flash-preview-04-17": 1048576,
+            "gemini-2.5-pro": 1048576, 
+            "gemini-2.5-flash": 1048576,
             "gemini-2.0-flash": 1048576,
             "gemini-1.5-pro": 1048576
         }
@@ -369,7 +367,7 @@ class GeminiProvider(LLMProvider):
     
     def get_default_model(self):
         """Return the default Gemini model"""
-        return "gemini-2.5-pro-exp-03-25"
+        return "ggemini-2.5-pro"
 
 
 class OllamaProvider(LLMProvider):

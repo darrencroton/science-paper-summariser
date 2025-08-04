@@ -4,7 +4,7 @@ Authors: Smith A., Rando B., etc
 
 Published: Month Year ([Link](<URL to paper>) <- ONLY if you see the arxiv or doi identifier! ...otherwise no link)
 
-## Key Ideas (up to 3 bullets)
+## Key Ideas
 
 - Blah blah blah[^1]
 - Blah blah blah[^2]  
