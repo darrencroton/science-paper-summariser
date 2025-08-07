@@ -367,7 +367,7 @@ class GeminiProvider(LLMProvider):
     
     def get_default_model(self):
         """Return the default Gemini model"""
-        return "ggemini-2.5-pro"
+        return "gemini-2.5-pro"
 
 
 class OllamaProvider(LLMProvider):
