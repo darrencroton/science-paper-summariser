@@ -86,15 +86,15 @@ class ClaudeProvider(LLMProvider):
     def get_max_context_size(self):
         """Return maximum context size for Claude model"""
         model_contexts = {
-            "claude-sonnet-4-0": 200000,
-            "claude-sonnet-3-7-latest": 200000,
-            "claude-haiku-3-5-latest": 200000
+            "claude-opus-4-6": 200000,
+            "claude-sonnet-4-6": 200000,
+            "claude-haiku-4-5": 200000
         }
         return model_contexts.get(self.model, 200000)
     
     def get_default_model(self):
         """Return the default Claude model"""
-        return "claude-sonnet-4-0"
+        return "claude-sonnet-4-6"
 
 
 class OpenAIProvider(LLMProvider):
@@ -168,17 +168,18 @@ class OpenAIProvider(LLMProvider):
     def get_max_context_size(self):
         """Return maximum context size for OpenAI model"""
         model_contexts = {
+            "gpt-5.2": 400000,
+            "gpt-5-mini": 400000,
+            "gpt-5-nano": 400000,
+            "gpt-4.1": 1047576,
             "gpt-4o": 128000,
-            "gpt-4o-mini": 128000, 
-            "gpt-4.1": 1047576, 
-            "gpt-4.1-mini": 1047576, 
-            "gpt-4.1-nano": 1047576
+            "gpt-4o-mini": 128000
         }
-        return model_contexts.get(self.model, 16385)
+        return model_contexts.get(self.model, 128000)
     
     def get_default_model(self):
         """Return the default OpenAI model for scientific PDF summarization"""
-        return "gpt-4.1"
+        return "gpt-5.2"
 
 
 class PerplexityProvider(LLMProvider):
@@ -250,16 +251,14 @@ class PerplexityProvider(LLMProvider):
         model_contexts = {
             "sonar": 128000,
             "sonar-pro": 128000,
-            "sonar-deep-research": 128000,
-            "sonar-reasoning": 128000,
             "sonar-reasoning-pro": 128000,
-            "r1-1776": 128000
+            "sonar-deep-research": 128000
         }
         return model_contexts.get(self.model, 128000)
     
     def get_default_model(self):
         """Return the default Perplexity model"""
-        return "r1-1776"
+        return "sonar-pro"
 
 
 class GeminiProvider(LLMProvider):
@@ -358,12 +357,13 @@ class GeminiProvider(LLMProvider):
         """Return maximum context size for Gemini model"""
         # Gemini models and their context sizes
         model_contexts = {
+            "gemini-3.1-pro-preview": 1048576,
+            "gemini-3-flash-preview": 1048576,
             "gemini-2.5-pro": 1048576, 
             "gemini-2.5-flash": 1048576,
-            "gemini-2.0-flash": 1048576,
-            "gemini-1.5-pro": 1048576
+            "gemini-2.5-flash-lite": 1048576
         }
-        return model_contexts.get(self.model, 32768)  # Default to 32K if unknown
+        return model_contexts.get(self.model, 1048576)
     
     def get_default_model(self):
         """Return the default Gemini model"""
