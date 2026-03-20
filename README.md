@@ -105,7 +105,11 @@ science-paper-summariser/
 
 2. Place PDF or text files in the `input/` directory
 
-3. Monitor `output/` for generated summaries. Processed papers end up in `processed/`
+3. Monitor progress:
+   ```bash
+   tail -f logs/history.log
+   ```
+   Summaries appear in `output/`. Processed papers move to `processed/`
 
 4. Stop the summariser:
    ```bash
