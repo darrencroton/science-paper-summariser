@@ -2,5 +2,7 @@ anthropic>=0.15.0
 openai>=1.1.0
 python-dotenv>=1.0.0
 requests>=2.31.0
-marker-pdf>=0.1.4
-google-generativeai>=0.3.0
+marker-pdf==1.5.2  # Pinned: v1.6+ has broken table recognition on some PDFs
+transformers<4.50  # surya-ocr 0.11.1 incompatible with transformers >=4.50
+psutil>=5.9.0
+google-genai>=1.0.0

@@ -33,6 +33,9 @@ logs/
 ehthumbs.db
 Thumbs.db
 
+# Archive
+archive/
+
 # Other
 *.command
 input
@@ -40,3 +43,6 @@ output
 processed
 old
 Summarise/
+examples/
+docs/
+test_validation/

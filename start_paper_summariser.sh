@@ -9,10 +9,10 @@ mkdir -p input
 # Start the Python summariser
 source myenv/bin/activate
 
-# --- Modified Redirection ---
-# Redirect both stdout (1) and stderr (2) to logs/history.log
+# Default provider is "claude" (CLI-first: uses Claude Code CLI if available,
+# falls back to Anthropic API). Override with: ./start_paper_summariser.sh gemini
+# Optionally specify a model: ./start_paper_summariser.sh claude claude-opus-4-6
 nohup python3 summarise.py $1 $2 >> logs/history.log 2>&1 &
-# --- End Modified Redirection ---
 
 PYTHON_PID=$!
 echo $PYTHON_PID > logs/process.pid

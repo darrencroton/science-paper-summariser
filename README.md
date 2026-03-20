@@ -1,9 +1,10 @@
 # Science Paper Summariser
 
-A Python tool that uses LLMs (Claude, GPT, Gemini, etc.) to automatically summarise scientific papers, following an exact template and hashtag list. The tool monitors an input directory for new PDFs or text files, processes them using your chosen model, and generates markdown summaries with extensive referencing back to the source material.
+A Python tool that uses LLMs to automatically summarise scientific papers, following an exact template and hashtag list. The tool monitors an input directory for new PDFs or text files, processes them using your chosen provider, and generates markdown summaries with extensive referencing back to the source material.
 
 ## Features
 
+- **CLI-first provider model**: prefers AI CLI tools (Claude Code, Codex, Gemini CLI, Copilot) when available, with automatic API fallback
 - Monitors input directory for new PDFs/text files
 - Generates detailed paper summaries in markdown format
 - Includes exact quotes as footnotes for all statements
@@ -17,13 +18,20 @@ A Python tool that uses LLMs (Claude, GPT, Gemini, etc.) to automatically summar
 
 ```
 science-paper-summariser/
-├── input/           # Place papers here for processing
-├── output/          # Generated summaries appear here
-├── processed/       # Completed papers are moved here
-├── logs/           # Processing history and errors
-└── project_knowledge/
-    ├── astronomy-keywords.txt
-    └── paper-summary-template.md
+├── input/               # Place papers here for processing
+├── output/              # Generated summaries appear here
+├── processed/           # Completed papers are moved here
+├── logs/                # Processing history and errors
+├── providers/           # LLM provider implementations
+│   ├── __init__.py      # Factory with auto-detection logic
+│   ├── base.py          # Provider base class
+│   ├── api.py           # API providers (Claude, OpenAI, Gemini, Perplexity, Ollama)
+│   └── cli.py           # CLI providers (Claude Code, Codex, Gemini CLI, Copilot)
+├── project_knowledge/
+│   ├── astronomy-keywords.txt
+│   └── paper-summary-template.md
+├── summarise.py         # Main orchestration
+└── start/stop scripts
 ```
 
 ## Setup
@@ -35,7 +43,13 @@ science-paper-summariser/
    pip install -r requirements.txt
    ```
 
-2. Add your LLM provider API key(s) to `.env` (see `.env.template`):
+2. **CLI tools (recommended):** Install one or more AI CLI tools. If a CLI tool is on your PATH, it will be used automatically:
+   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `claude`
+   - [Codex CLI](https://github.com/openai/codex) — `codex`
+   - [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `gemini`
+   - [GitHub Copilot CLI](https://docs.github.com/en/copilot) — `copilot`
+
+3. **API keys (optional fallback):** If you don't have CLI tools installed, or want to use explicit API providers, add your keys to `.env` (see `.env.template`):
    ```
    ANTHROPIC_API_KEY=your_key_here
    OPENAI_API_KEY=your_key_here
@@ -43,44 +57,50 @@ science-paper-summariser/
    GOOGLE_API_KEY=your_key_here
    ```
 
-3. Create required directories:
+4. Create required directories:
    ```bash
    mkdir -p input output processed logs
    ```
    Tip: create symbolic links to where you want to read/write the input/output
 
-4. Make the start and stop scripts executable:
+5. Make the start and stop scripts executable:
    ```bash
    chmod +x start_paper_summariser.sh stop_paper_summariser.sh
    ```
 
 ## Usage
 
-1. Start the summariser with your preferred LLM provider (see below for defaults):
+1. Start the summariser with your preferred provider:
    ```bash
-   # Use Claude (default)
+   # Use Claude (default) — tries Claude Code CLI first, falls back to API
    ./start_paper_summariser.sh
-   
-   # Specify a different Claude model
-   ./start_paper_summariser.sh claude claude-haiku-4-5
-   
-   # Use Gemini
+
+   # Use Gemini — tries Gemini CLI first, falls back to API
    ./start_paper_summariser.sh gemini
-   
-   # Specify a different Gemini model
-   ./start_paper_summariser.sh gemini gemini-2.5-flash
-   
-   # Use OpenAI
+
+   # Use Codex CLI
+   ./start_paper_summariser.sh codex
+
+   # Use Copilot CLI
+   ./start_paper_summariser.sh copilot
+
+   # Use OpenAI API directly
    ./start_paper_summariser.sh openai
-   
-   # Specify a different OpenAI model
-   ./start_paper_summariser.sh openai gpt-5-mini
-   
-   # Use Perplexity
+
+   # Force API mode (bypass CLI auto-detection)
+   ./start_paper_summariser.sh claude-api
+   ./start_paper_summariser.sh gemini-api
+
+   # Use Perplexity API
    ./start_paper_summariser.sh perplexity
 
-   # Use Ollama with optional model specification
-   ./start_paper_summariser.sh ollama llama3.1:8b-instruct-q8_0
+   # Use Ollama (local)
+   ./start_paper_summariser.sh ollama
+
+   # Specify a model override for any provider
+   ./start_paper_summariser.sh claude claude-opus-4-6
+   ./start_paper_summariser.sh gemini gemini-2.5-flash
+   ./start_paper_summariser.sh openai gpt-5-mini
    ```
 
 2. Place PDF or text files in the `input/` directory
@@ -92,53 +112,42 @@ science-paper-summariser/
    ./stop_paper_summariser.sh
    ```
 
-## Supported Models
+## Providers
 
-This tool supports a variety of LLM providers and models. Please check `llm_providers.py` and update as needed. 
+### CLI-first (auto-detection)
 
-NOTE: In my experience, Claude Sonnet 4, Gemini 2.5 Pro, and GPT 5.2 give the best results. The rest can be hit and miss. I'm yet to find an Ollama model that fits in 32GB Macbook Pro shared memory and consistantly gives good results (although Qwen 2.5 14b isn't terrible).
+| Name | CLI Tool | API Fallback | Notes |
+|------|----------|-------------|-------|
+| `claude` (default) | `claude` | Anthropic API | Requires Claude Code CLI or `ANTHROPIC_API_KEY` |
+| `gemini` | `gemini` | Google Gemini API | Requires Gemini CLI or `GOOGLE_API_KEY` |
 
-### Claude (default)
-- `claude-sonnet-4-6` (default)
-- `claude-opus-4-6`
-- `claude-haiku-4-5`
+### CLI-only
 
-### Google Gemini
-- `gemini-2.5-pro` (default)
-- `gemini-2.5-flash`
-- `gemini-2.5-flash-lite`
-- `gemini-3-flash-preview` (preview)
-- `gemini-3.1-pro-preview` (preview)
+| Name | CLI Tool | Notes |
+|------|----------|-------|
+| `codex` | `codex` | OpenAI Codex CLI |
+| `copilot` | `copilot` | GitHub Copilot CLI |
 
-### OpenAI
-- `gpt-5.2` (default)
-- `gpt-5-mini`
-- `gpt-5-nano`
-- `gpt-4.1`
-- `gpt-4o`
-- `gpt-4o-mini`
+### API-only
 
-### Perplexity
-- `sonar-pro` (default)
-- `sonar`
-- `sonar-reasoning-pro`
-- `sonar-deep-research`
+| Name | Notes |
+|------|-------|
+| `openai` / `openai-api` | Requires `OPENAI_API_KEY` |
+| `perplexity` / `perplexity-api` | Requires `PERPLEXITY_API_KEY` |
+| `ollama` | Local at `localhost:11434` |
+| `claude-api` | Explicit API (bypasses CLI check) |
+| `gemini-api` | Explicit API (bypasses CLI check) |
 
-### Ollama
-- `qwen2.5:14b-instruct-q8_0` (default)
-- `llama3.1:8b-instruct-q8_0`
-- ... any model available in your local Ollama installation
+Model override works for all providers — pass the model name as the second argument. If no model is specified, each provider uses its own sensible default. Check each provider's documentation for available models.
 
+NOTE: In my experience, the latest Claude Sonnet/Opus, Gemini Pro, and GPT give the best results via both CLI and API. Ollama can be hit and miss depending on the model and available memory.
 
 ## Requirements
 
 - zsh shell
 - Python 3.9+
-- API keys (depending on provider):
-  - Anthropic API key (for Claude)
-  - OpenAI API key (for GPT models)
-  - Perplexity API key (for Perplexity)
-  - Google API key (for Gemini)
-- Ollama installed locally (for Ollama provider)
+- At least one of:
+  - An AI CLI tool on PATH (`claude`, `codex`, `gemini`, `copilot`)
+  - API keys for the chosen provider
 - python-dotenv
-- marker-pdf
+- marker-pdf (for PDF text extraction when the provider doesn't support direct PDF upload)
