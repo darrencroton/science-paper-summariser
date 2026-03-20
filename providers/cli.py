@@ -9,8 +9,11 @@ is always performed before the prompt is constructed.
 """
 
 import logging
+import os
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 from .base import Provider
 
@@ -33,6 +36,7 @@ class CLIProvider(Provider):
     model_flag = "--model"
     default_context_size = 200_000
     default_timeout = 600
+    env_blocklist = ()
 
     def setup(self):
         """Verify the CLI tool is available on PATH and apply default model."""
@@ -55,6 +59,32 @@ class CLIProvider(Provider):
             cmd.append(prompt)
         return cmd
 
+    def _run_command(self, cmd, input_text=None):
+        """Run the CLI command and normalise timeout errors."""
+        env = os.environ.copy()
+        for key in self.env_blocklist:
+            env.pop(key, None)
+
+        try:
+            return subprocess.run(
+                cmd,
+                input=input_text,
+                capture_output=True,
+                env=env,
+                text=True,
+                timeout=self.default_timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"{self.cli_command} timed out after {self.default_timeout}s"
+            ) from exc
+
+    @staticmethod
+    def _get_error_output(result):
+        """Extract a concise error message from a completed subprocess."""
+        error_output = result.stderr.strip() or result.stdout.strip()
+        return error_output[:500] if error_output else "(no output)"
+
     def process_document(self, content, is_pdf, system_prompt, user_prompt, max_tokens=12288):
         """Process document by invoking the CLI tool with the combined prompt."""
         combined_prompt = f"{system_prompt}\n\n{user_prompt}"
@@ -65,17 +95,10 @@ class CLIProvider(Provider):
             f"(prompt: {len(combined_prompt)} chars, timeout: {self.default_timeout}s)"
         )
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=self.default_timeout,
-        )
+        result = self._run_command(cmd)
 
         if result.returncode != 0:
-            # Some CLI tools write errors to stdout, others to stderr
-            error_output = result.stderr.strip() or result.stdout.strip()
-            error_snippet = error_output[:500] if error_output else "(no output)"
+            error_snippet = self._get_error_output(result)
             raise RuntimeError(
                 f"{self.cli_command} exited with code {result.returncode}: {error_snippet}"
             )
@@ -100,6 +123,7 @@ class ClaudeCLI(CLIProvider):
     model_flag = "--model"
     default_model = "claude-sonnet-4-6"
     default_context_size = 200_000
+    env_blocklist = ("ANTHROPIC_API_KEY",)
 
 
 class CodexCLI(CLIProvider):
@@ -113,14 +137,56 @@ class CodexCLI(CLIProvider):
     extra_flags = ["exec"]
     model_flag = ""  # Handled by _build_command override
     default_context_size = 200_000
+    default_timeout = 1800
+    env_blocklist = ("OPENAI_API_KEY",)
 
     def _build_command(self, prompt):
         """Build command with codex-specific model config syntax."""
         cmd = [self.cli_command, *self.extra_flags]
         if self.model:
             cmd.extend(["-c", f'model="{self.model}"'])
-        cmd.append(prompt)
+        cmd.extend(["-"])
         return cmd
+
+    def process_document(self, content, is_pdf, system_prompt, user_prompt, max_tokens=12288):
+        """Run Codex using stdin for the prompt and a temp file for the final reply.
+
+        Codex writes session banners and warnings to stdout in exec mode. Using
+        `-o` keeps the captured summary clean and avoids leaking prompt text via
+        timeout exceptions because the prompt is no longer a positional argument.
+        """
+        combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+        cmd = self._build_command(combined_prompt)
+
+        output_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
+                output_path = Path(tmp.name)
+
+            cmd.extend(["-o", str(output_path)])
+
+            logging.info(
+                f"Invoking {self.cli_command} CLI "
+                f"(prompt: {len(combined_prompt)} chars, timeout: {self.default_timeout}s)"
+            )
+
+            result = self._run_command(cmd, input_text=combined_prompt)
+
+            if result.returncode != 0:
+                error_snippet = self._get_error_output(result)
+                raise RuntimeError(
+                    f"{self.cli_command} exited with code {result.returncode}: {error_snippet}"
+                )
+
+            output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+            if not output or not output.strip():
+                raise ValueError(f"{self.cli_command} returned empty output")
+
+            logging.info(f"{self.cli_command} CLI returned {len(output)} chars")
+            return output
+        finally:
+            if output_path and output_path.exists():
+                output_path.unlink()
 
 
 class GeminiCLI(CLIProvider):
@@ -131,6 +197,7 @@ class GeminiCLI(CLIProvider):
     extra_flags = ["-o", "text"]
     model_flag = "-m"
     default_context_size = 1_000_000
+    env_blocklist = ("GOOGLE_API_KEY",)
 
 
 class CopilotCLI(CLIProvider):

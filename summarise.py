@@ -333,6 +333,20 @@ def _write_debug_prompt(system_prompt, user_prompt):
         logging.warning(f"Could not write debug prompt file: {e}")
 
 
+def _is_retryable_llm_error(error):
+    """Return whether an LLM/provider error is worth retrying."""
+    message = str(error).lower()
+    non_retryable_markers = (
+        "credit balance is too low",
+        "api key",
+        "authentication",
+        "logged out",
+        "login required",
+        "not found on path",
+    )
+    return not any(marker in message for marker in non_retryable_markers)
+
+
 def _call_llm_with_retry(provider, content, is_pdf, system_prompt, user_prompt, max_retries=3):
     """Call the LLM with retry logic and exponential backoff.
 
@@ -368,6 +382,10 @@ def _call_llm_with_retry(provider, content, is_pdf, system_prompt, user_prompt, 
                 f"{e.__class__.__name__}: {e}"
             )
             logging.error(error_msg)
+
+            if not _is_retryable_llm_error(e):
+                logging.error("Provider error is non-retryable. Skipping remaining attempts.")
+                break
 
             if attempt < max_retries - 1:
                 wait_time = 2 ** (attempt + 1)
