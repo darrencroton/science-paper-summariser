@@ -8,12 +8,9 @@ Provider selection is explicit:
 python3 summarise.py [mode] [provider] [model]
 ```
 
-The program never switches mode or provider automatically. If the requested mode or provider cannot run, it exits immediately with a clear error.
-
 ## Features
 
 - Explicit `cli` and `api` modes
-- No automatic provider switching
 - Monitors `input/` for PDF and text files
 - Generates markdown summaries with exact supporting quotes in footnotes
 - Uses UK English and LaTeX for equations
@@ -138,7 +135,7 @@ tail -f logs/history.log
 ./stop_paper_summariser.sh
 ```
 
-Summaries are written to `output/`. Processed papers are moved to `processed/`.
+Summaries are written to `output/`. Processed papers are moved to `processed/`. Use symlinks if you want these to go elsewhere.
 
 ## Supported Providers
 
@@ -169,7 +166,6 @@ Each provider keeps its own internal default model. Passing a third argument ove
 - Provider unsupported in the selected mode: exits immediately
 - CLI binary missing in `cli` mode: exits immediately
 - API key missing in `api` mode: exits immediately
-- No automatic CLI/API switching is attempted
 
 `logs/history.log` records the selected mode, requested provider, provider backend class, and active model so CLI and API runs are easy to distinguish.
 
