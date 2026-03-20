@@ -10,7 +10,7 @@ A Python tool that uses LLMs to automatically summarise scientific papers, follo
 - Includes exact quotes as footnotes for all statements
 - UK English with LaTeX support for equations
 - Creates glossary of technical terms
-- Moves processed files to archive
+- Moves processed files to `processed/` with collision-safe renaming
 - Comprehensive logging
 - Tracks files that failed after 3 processing attempts in failed.log
 

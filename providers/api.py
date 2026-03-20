@@ -103,6 +103,7 @@ class OpenAIAPI(Provider):
                 model=self.model,
                 input=input_content,
                 temperature=self.config.get("temperature", 0.2),
+                max_output_tokens=max_tokens,
             )
             return response.output[0].content[0].text
         else:

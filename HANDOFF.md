@@ -20,7 +20,7 @@
 - [x] **Compare summaries against reference examples** — scored (see Validation section)
 - [x] **Test API pathway** — Claude API: auth failure (zero credits, expected). Gemini API gemini-2.5-pro: quota=0 on free tier. Gemini API gemini-2.5-flash: SUCCESS (42s, passes validation). All failures are billing/quota, not code bugs.
 - [x] **Identify and fix any further issues** found during validation — see robustness fixes above
-- [ ] Commit all changes (user must explicitly approve)
+- [x] Commit all changes — done (see git log)
 
 ## Current Status
 - All 5 modernisation phases are implemented and code-reviewed.
@@ -78,26 +78,23 @@ Notes:
 3. **`providers/api.py` (GeminiAPI)**: Changed `default_model` from `gemini-2.5-pro` (free tier quota = 0) to `gemini-2.5-flash` (meaningful free tier).
 4. **`summarise.py` (validate_summary)**: Bullet detection now counts both `- ` and `* ` prefixes. Gemini and some other LLMs use `*` bullets which were previously missed, causing false "0 bullets" warnings.
 
-## Files That Matter
+## Committed Files (all in main)
 
-### Modified
-- `summarise.py` — Major rewrite + robustness: lazy marker-pdf loading, MPS fallback, marker timeout (ThreadPoolExecutor), interruptible sleep, extracted helpers, save_summary error propagation, single metadata extraction, `*` bullet detection.
-- `providers/api.py` — 5 API providers; GeminiAPI default model → gemini-2.5-flash; OllamaAPI HTTP timeout added.
+- `summarise.py` — Major rewrite + robustness: lazy marker-pdf loading, MPS fallback, marker timeout (ThreadPoolExecutor), interruptible sleep, extracted helpers, save_summary collision handling, save_summary error propagation, single metadata extraction, `*` bullet detection.
+- `providers/api.py` — 5 API providers; GeminiAPI default model → gemini-2.5-flash; OllamaAPI HTTP timeout; OpenAI PDF path now passes `max_output_tokens`.
+- `providers/__init__.py` — Factory with `create_provider()`, auto-detection logic.
+- `providers/base.py` — `Provider` base class.
+- `providers/cli.py` — 4 CLI providers (Claude, Codex, Gemini, Copilot).
 - `requirements.txt` — Pinned `marker-pdf==1.5.2`, added `transformers<4.50`, added `psutil>=5.9.0`.
 - `README.md` — Rewritten with CLI-first provider model, provider routing tables.
 - `AGENTS.md` — Full CLAUDE.md content (syncs via hook).
 - `.env.template` — Updated: API keys only needed for fallback.
-- `.gitignore` — Added `archive/`.
+- `.gitignore` — Added `archive/`; removed exclusions for `docs/`, `examples/`, `test_validation/`.
 - `start_paper_summariser.sh` — Updated with CLI-first comments.
-
-### New (untracked)
-- `providers/__init__.py` — Factory with `create_provider()`, auto-detection logic.
-- `providers/base.py` — `Provider` base class.
-- `providers/cli.py` — 4 CLI providers (Claude, Codex, Gemini, Copilot).
 - `test_validation/run_test.py` — Single-provider test script.
 - `test_validation/run_all_tests.py` — Batch test script (extracts PDFs once, tests all providers sequentially).
-
-### Deleted
+- `docs/codebase-modernisation-report.md` — Modernisation plan.
+- `examples/` — Reference PDFs and summaries.
 - `llm_providers.py` — Archived to `archive/llm_providers.py`, `git rm`'d.
 
 ### Reference
@@ -132,7 +129,7 @@ source myenv/bin/activate && python3 -c "import summarise; from providers import
 - `test_validation/output/gemini-api - Torralba et al - 2026 ....md` — 301KB malformed glossary output; can be deleted.
 
 ## Next Action
-- All validation and robustness tasks are complete. Ask user to approve commit. All changed files are listed in "Files That Matter" above.
+- All work complete. Pending commit for: `save_summary()` collision fix (P1), OpenAI PDF `max_output_tokens` fix (P2), `.gitignore` unblock of `docs/`/`examples/`/`test_validation/`, README stale wording fix, HANDOFF cleanup. Ask user to approve commit.
 
 ## Resume Prompt
-Continue this task using `HANDOFF.md` as the source of truth. All validation is complete. The only remaining step is committing — ask the user to approve before committing. Files to commit: `summarise.py`, `providers/api.py`, and all files listed under "Modified" and "New (untracked)" in the Files That Matter section.
+Continue this task using `HANDOFF.md` as the source of truth. Three post-review fixes are staged and awaiting user approval to commit: save_summary() collision handling, OpenAI PDF max_output_tokens, .gitignore unblocking docs/examples/test_validation, and minor README + HANDOFF cleanup.

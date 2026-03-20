@@ -573,12 +573,21 @@ def create_base_filename(title, authors_surnames, year, input_path):
 def save_summary(summary_content, base_filename):
     """Save the generated summary to a markdown file in the output directory.
 
+    Appends a numeric counter (_1, _2, …) if the filename already exists,
+    mirroring the collision-safe logic in move_to_done().
+
     Returns the output Path on success.
     Raises on failure so the caller can avoid moving the original file.
     """
-    output_filename = f"{base_filename}.md"
-    output_path = OUTPUT_DIR / output_filename
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = OUTPUT_DIR / f"{base_filename}.md"
+    original_path = output_path
+    counter = 1
+    while output_path.exists():
+        output_path = OUTPUT_DIR / f"{base_filename}_{counter}.md"
+        counter += 1
+        if counter == 2:
+            logging.warning(f"Output {original_path.name} exists, adding counter.")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(summary_content)
     logging.info(f"Summary saved to: {output_path}")
@@ -691,9 +700,9 @@ def process_file(file_path, keywords, template, provider):
         title, authors, year = extract_metadata(summary)
         base_filename = create_base_filename(title, authors, year, file_path)
 
-        save_summary(summary, base_filename)
+        saved_path = save_summary(summary, base_filename)
 
-        moved = move_to_done(file_path, base_filename)
+        moved = move_to_done(file_path, saved_path.stem)
         if not moved:
             return (
                 False,
