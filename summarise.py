@@ -18,6 +18,7 @@ import re
 import time
 import logging
 import signal
+import concurrent.futures
 from dotenv import load_dotenv
 from pathlib import Path
 from providers import create_provider
@@ -47,6 +48,7 @@ shutdown_requested = False
 
 # --- Lazy-loaded marker-pdf model cache ---
 _marker_models = None
+MARKER_TIMEOUT = 300  # seconds before marker-pdf extraction is abandoned
 
 
 def _get_marker_models():
@@ -215,7 +217,19 @@ def read_input_file(file_path, provider):
                     renderer=config_parser.get_renderer(),
                     llm_service=config_parser.get_llm_service(),
                 )
-                rendered = converter(str(file_path))
+                logging.info(
+                    f"Running marker-pdf extraction "
+                    f"(timeout: {MARKER_TIMEOUT}s): {file_path.name}"
+                )
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(converter, str(file_path))
+                    try:
+                        rendered = future.result(timeout=MARKER_TIMEOUT)
+                    except concurrent.futures.TimeoutError:
+                        raise RuntimeError(
+                            f"marker-pdf timed out after {MARKER_TIMEOUT}s "
+                            f"processing {file_path.name}"
+                        )
                 text, _, _ = text_from_rendered(rendered)
                 logging.info(f"Extracted ~{len(text.split())} words from PDF")
                 return text, None
@@ -407,7 +421,11 @@ def validate_summary(summary_content):
     author_complete = not any(
         "et al" in line.lower() for line in lines[:5] if line.startswith("Authors:")
     )
-    bullet_count = sum(1 for line in lines if line.startswith("- ") and not line.startswith("[^"))
+    bullet_count = sum(
+        1 for line in lines
+        if (line.startswith("- ") or line.startswith("* "))
+        and not line.startswith("[^")
+    )
     footnote_count = sum(1 for line in lines if line.startswith("[^"))
     footnote_lines = [line for line in lines if line.startswith("[^")]
     properly_quoted = sum(

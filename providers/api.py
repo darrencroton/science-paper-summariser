@@ -124,7 +124,7 @@ class OpenAIAPI(Provider):
 class GeminiAPI(Provider):
     """Google Gemini API provider using the google-genai SDK."""
 
-    default_model = "gemini-2.5-pro"
+    default_model = "gemini-2.5-flash"
     default_context_size = 1_000_000
 
     def supports_direct_pdf(self):
@@ -256,7 +256,8 @@ class OllamaAPI(Provider):
             },
         }
 
-        response = requests.post(f"{self.base_url}/api/generate", json=data)
+        timeout = self.config.get("timeout", 300)
+        response = requests.post(f"{self.base_url}/api/generate", json=data, timeout=timeout)
         response.raise_for_status()
 
         response_data = response.json()
