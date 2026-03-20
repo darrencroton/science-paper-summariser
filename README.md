@@ -18,6 +18,7 @@ The program never switches mode or provider automatically. If the requested mode
 - Generates markdown summaries with exact supporting quotes in footnotes
 - Uses UK English and LaTeX for equations
 - Includes glossary and tags sections
+- Recovers arXiv metadata from filenames to enforce the `Published:` date and link
 - Moves processed files with collision-safe renaming
 - Logs successes, failures, and the last prompt sent to the model
 
@@ -171,24 +172,6 @@ Each provider keeps its own internal default model. Passing a third argument ove
 - No automatic CLI/API switching is attempted
 
 `logs/history.log` records the selected mode, requested provider, provider backend class, and active model so CLI and API runs are easy to distinguish.
-
-## Migration Note
-
-Old one-argument invocations no longer work. Replace commands such as:
-
-```bash
-python3 summarise.py gemini
-./start_paper_summariser.sh gemini
-python3 summarise.py claude-api
-```
-
-with explicit mode/provider forms:
-
-```bash
-python3 summarise.py cli gemini
-./start_paper_summariser.sh cli gemini
-python3 summarise.py api claude
-```
 
 ## Requirements
 

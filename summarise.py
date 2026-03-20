@@ -19,8 +19,10 @@ import time
 import logging
 import signal
 import concurrent.futures
+from dataclasses import dataclass
 from dotenv import load_dotenv
 from pathlib import Path
+from typing import Optional
 from providers import SUPPORTED_MODES, create_provider, get_supported_provider_names
 
 # --- Configuration and Paths ---
@@ -48,6 +50,50 @@ shutdown_requested = False
 # --- Lazy-loaded marker-pdf model cache ---
 _marker_models = None
 MARKER_TIMEOUT = 300  # seconds before marker-pdf extraction is abandoned
+SOURCE_SCAN_CHAR_LIMIT = 4000
+
+ARXIV_FILENAME_RE = re.compile(
+    r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[A-Za-z.-]+/\d{7}(?:v\d+)?)"
+)
+ARXIV_TEXT_RE = re.compile(
+    r"(?:arxiv\s*:\s*|arxiv\.org/(?:abs|pdf)/)"
+    r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[A-Za-z.-]+/\d{7}(?:v\d+)?)",
+    re.IGNORECASE,
+)
+ARXIV_NEW_STYLE_RE = re.compile(
+    r"^(?P<yy>\d{2})(?P<mm>0[1-9]|1[0-2])\.\d{4,5}(?:v\d+)?$"
+)
+DOI_URL_RE = re.compile(
+    r"https?://(?:dx\.)?doi\.org/(?P<doi>10\.\d{4,9}/[-._;()/:A-Z0-9]+)",
+    re.IGNORECASE,
+)
+DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
+
+MONTH_NAMES = {
+    1: "January",
+    2: "February",
+    3: "March",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
+    11: "November",
+    12: "December",
+}
+
+
+@dataclass(frozen=True)
+class SourceMetadata:
+    """Structured source metadata that can guide or repair summary top matter."""
+
+    source_type: Optional[str] = None
+    identifier: Optional[str] = None
+    canonical_url: Optional[str] = None
+    published_label: Optional[str] = None
+    detection_method: Optional[str] = None
 
 
 def format_usage():
@@ -286,6 +332,170 @@ def read_input_file(file_path, provider):
         return None, f"File read/processing error: {e}"
 
 
+# --- Source metadata detection ---
+
+def _trim_trailing_punctuation(value):
+    """Remove punctuation that commonly trails detected identifiers in prose."""
+    return value.rstrip(").,;:]")
+
+
+def _extract_arxiv_id_from_filename(input_path):
+    """Extract an arXiv identifier from the input filename when present."""
+    stem = input_path.stem.strip()
+    if not stem:
+        return None
+
+    if full_match := ARXIV_FILENAME_RE.fullmatch(stem):
+        return full_match.group("id")
+
+    if search_match := ARXIV_FILENAME_RE.search(stem):
+        return search_match.group("id")
+    return None
+
+
+def _extract_arxiv_id_from_text(paper_text):
+    """Extract an arXiv identifier from the document header region when present."""
+    if not paper_text:
+        return None
+
+    header_window = paper_text[:SOURCE_SCAN_CHAR_LIMIT]
+    if match := ARXIV_TEXT_RE.search(header_window):
+        return match.group("id")
+    return None
+
+
+def _extract_doi_from_text(paper_text):
+    """Extract a DOI from the document header region when present."""
+    if not paper_text:
+        return None
+
+    header_window = paper_text[:SOURCE_SCAN_CHAR_LIMIT]
+    if url_match := DOI_URL_RE.search(header_window):
+        return _trim_trailing_punctuation(url_match.group("doi"))
+
+    if doi_match := DOI_RE.search(header_window):
+        return _trim_trailing_punctuation(doi_match.group(0))
+    return None
+
+
+def _published_label_from_arxiv_id(arxiv_id):
+    """Return a month/year label for new-style arXiv identifiers."""
+    if not arxiv_id:
+        return None
+
+    if match := ARXIV_NEW_STYLE_RE.match(arxiv_id):
+        year = 2000 + int(match.group("yy"))
+        month = MONTH_NAMES[int(match.group("mm"))]
+        return f"{month} {year}"
+    return None
+
+
+def _canonical_arxiv_url(arxiv_id):
+    """Return the canonical arXiv abstract URL, without a version suffix when present."""
+    if not arxiv_id:
+        return None
+
+    versionless_id = re.sub(r"v\d+$", "", arxiv_id, flags=re.IGNORECASE)
+    return f"https://arxiv.org/abs/{versionless_id}"
+
+
+def extract_source_metadata(input_path, paper_text):
+    """Detect canonical paper identifiers that can enforce the Published line."""
+    if arxiv_id := _extract_arxiv_id_from_filename(input_path):
+        return SourceMetadata(
+            source_type="arxiv",
+            identifier=arxiv_id,
+            canonical_url=_canonical_arxiv_url(arxiv_id),
+            published_label=_published_label_from_arxiv_id(arxiv_id),
+            detection_method="filename",
+        )
+
+    if arxiv_id := _extract_arxiv_id_from_text(paper_text):
+        return SourceMetadata(
+            source_type="arxiv",
+            identifier=arxiv_id,
+            canonical_url=_canonical_arxiv_url(arxiv_id),
+            published_label=_published_label_from_arxiv_id(arxiv_id),
+            detection_method="paper_text",
+        )
+
+    if doi := _extract_doi_from_text(paper_text):
+        return SourceMetadata(
+            source_type="doi",
+            identifier=doi,
+            canonical_url=f"https://doi.org/{doi}",
+            detection_method="paper_text",
+        )
+
+    return SourceMetadata()
+
+
+def _extract_existing_published_text(line):
+    """Extract the free-text Published value, excluding any trailing markdown link."""
+    if not line:
+        return ""
+
+    stripped = line.strip()
+    if stripped.startswith("Published:"):
+        stripped = stripped[len("Published:"):].strip()
+
+    return re.sub(r"\s*\(?\[[^\]]+\]\([^)]+\)\)?\s*$", "", stripped).strip()
+
+
+def build_published_line(existing_line, source_metadata):
+    """Construct the canonical Published line from model output and detected metadata."""
+    if not source_metadata:
+        return existing_line
+
+    published_text = source_metadata.published_label or _extract_existing_published_text(existing_line)
+    if not published_text:
+        return existing_line
+
+    if source_metadata.canonical_url:
+        return f"Published: {published_text} ([Link]({source_metadata.canonical_url}))"
+    return f"Published: {published_text}"
+
+
+def enforce_source_metadata(summary_content, source_metadata):
+    """Normalise the Published line when a canonical identifier is known."""
+    if not source_metadata or not (source_metadata.canonical_url or source_metadata.published_label):
+        return summary_content
+
+    lines = summary_content.split("\n")
+    authors_index = None
+    published_index = None
+
+    for index, line in enumerate(lines[:12]):
+        stripped = line.strip()
+        if authors_index is None and stripped.startswith("Authors:"):
+            authors_index = index
+        if published_index is None and stripped.startswith("Published:"):
+            published_index = index
+
+    if published_index is not None:
+        replacement = build_published_line(lines[published_index], source_metadata)
+        if replacement and replacement != lines[published_index]:
+            lines[published_index] = replacement
+            logging.info(
+                "Normalised Published line using %s metadata (%s).",
+                source_metadata.source_type,
+                source_metadata.detection_method,
+            )
+        return "\n".join(lines)
+
+    replacement = build_published_line("", source_metadata)
+    if replacement and authors_index is not None:
+        lines.insert(authors_index + 1, replacement)
+        logging.info(
+            "Inserted missing Published line using %s metadata (%s).",
+            source_metadata.source_type,
+            source_metadata.detection_method,
+        )
+        return "\n".join(lines)
+
+    return summary_content
+
+
 # --- Prompt construction ---
 
 def create_system_prompt(keywords):
@@ -319,7 +529,7 @@ def create_system_prompt(keywords):
     )
 
 
-def create_user_prompt(paper_text, template, is_pdf=False):
+def create_user_prompt(paper_text, template, source_metadata=None, is_pdf=False):
     """Construct the user prompt with the task, template, and optionally the paper text.
 
     If paper_text is empty, the LLM receives the paper via other means (e.g. direct PDF upload).
@@ -349,6 +559,25 @@ def create_user_prompt(paper_text, template, is_pdf=False):
         "</tags>\n"
         "</task>\n\n"
     )
+
+    if source_metadata and source_metadata.canonical_url:
+        base_prompt += (
+            "<source_metadata>\n"
+            f"Detected source identifier: {source_metadata.source_type}:{source_metadata.identifier}\n"
+            f"Canonical paper link: {source_metadata.canonical_url}\n"
+        )
+        if source_metadata.published_label:
+            base_prompt += (
+                f"Published line date: {source_metadata.published_label}\n"
+            )
+        base_prompt += (
+            "You MUST use this exact link in the Published line.\n"
+        )
+        if source_metadata.published_label:
+            base_prompt += (
+                "You MUST use this exact month and year in the Published line.\n"
+            )
+        base_prompt += "</source_metadata>\n\n"
 
     if paper_text:
         base_prompt += (
@@ -463,7 +692,7 @@ def strip_preamble(summary_content):
         return summary_content
 
 
-def validate_summary(summary_content):
+def validate_summary(summary_content, source_metadata=None):
     """Validate the generated summary structure and log results.
 
     This is a safety-net check — it logs warnings but does not reject summaries.
@@ -475,9 +704,21 @@ def validate_summary(summary_content):
 
     # Structural checks
     start_with_title = lines[0].startswith("# ")
+    published_line = next((line for line in lines[:6] if line.startswith("Published:")), "")
     year_found = any(re.search(r"\b(19|20)\d{2}\b", line) for line in lines[:5])
     author_complete = not any(
         "et al" in line.lower() for line in lines[:5] if line.startswith("Authors:")
+    )
+    published_has_link = bool(re.search(r"\[[^\]]+\]\(https?://[^)]+\)", published_line))
+    expected_link_ok = (
+        source_metadata.canonical_url in published_line
+        if source_metadata and source_metadata.canonical_url
+        else published_has_link
+    )
+    expected_date_ok = (
+        source_metadata.published_label in published_line
+        if source_metadata and source_metadata.published_label
+        else year_found
     )
     bullet_count = sum(
         1 for line in lines
@@ -507,8 +748,15 @@ def validate_summary(summary_content):
     # Log results
     logging.info("Validation results:")
     logging.info(f"  Starts with title: {start_with_title}")
+    logging.info(f"  Has Published line: {bool(published_line)}")
     logging.info(f"  Year found: {year_found}")
     logging.info(f"  Author list complete: {author_complete}")
+    if source_metadata and source_metadata.canonical_url:
+        logging.info(f"  Expected paper link present: {expected_link_ok}")
+    elif published_line:
+        logging.info(f"  Published line has link: {published_has_link}")
+    if source_metadata and source_metadata.published_label:
+        logging.info(f"  Expected publication date present: {expected_date_ok}")
     logging.info(f"  Bullets: {bullet_count}, Footnotes: {footnote_count}")
     logging.info(
         f"  All footnotes quoted: {all_quoted} ({properly_quoted}/{footnote_count})"
@@ -519,8 +767,20 @@ def validate_summary(summary_content):
     # Specific warnings
     if not start_with_title:
         logging.warning("VALIDATION WARNING: Summary does not start with title heading '# '")
+    if not published_line:
+        logging.warning("VALIDATION WARNING: Missing 'Published:' line near top of summary")
     if not year_found:
         logging.warning("VALIDATION WARNING: No year found near top of summary")
+    if source_metadata and source_metadata.published_label and not expected_date_ok:
+        logging.warning(
+            "VALIDATION WARNING: Published line does not include expected month/year '%s'",
+            source_metadata.published_label,
+        )
+    if source_metadata and source_metadata.canonical_url and not expected_link_ok:
+        logging.warning(
+            "VALIDATION WARNING: Published line missing expected canonical link '%s'",
+            source_metadata.canonical_url,
+        )
     if not author_complete:
         logging.warning(
             "VALIDATION WARNING: Author list might be truncated ('et al.' found)"
@@ -738,7 +998,25 @@ def process_file(file_path, keywords, template, provider):
         else:
             paper_text = content
 
-        user_prompt = create_user_prompt(paper_text, template, is_pdf)
+        source_metadata = extract_source_metadata(file_path, paper_text)
+        if source_metadata.canonical_url:
+            logging.info(
+                "Detected source metadata: type=%s, id=%s, url=%s, date=%s, via=%s",
+                source_metadata.source_type,
+                source_metadata.identifier,
+                source_metadata.canonical_url,
+                source_metadata.published_label or "n/a",
+                source_metadata.detection_method,
+            )
+        else:
+            logging.info("No canonical source metadata detected for %s", file_path.name)
+
+        user_prompt = create_user_prompt(
+            paper_text,
+            template,
+            source_metadata=source_metadata,
+            is_pdf=is_pdf,
+        )
 
         prompt_info = (
             f"System prompt: {len(system_prompt)} chars. "
@@ -755,7 +1033,8 @@ def process_file(file_path, keywords, template, provider):
 
         # 4. Post-process
         summary = strip_preamble(summary)
-        validate_summary(summary)
+        summary = enforce_source_metadata(summary, source_metadata)
+        validate_summary(summary, source_metadata=source_metadata)
 
         # 5. Extract metadata once, use for both save and move
         title, authors, year = extract_metadata(summary)
