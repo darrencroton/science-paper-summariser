@@ -6,24 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Science Paper Summariser is a Python service that monitors an `input/` directory for PDFs and text files, sends them to an LLM with a strict astronomy-focused summary template, validates the output, and writes markdown summaries to `output/`. Processed papers are moved to `processed/`. It runs as a background `nohup` process via shell scripts.
 
-The tool uses a **CLI-first provider model**: it prefers AI CLI tools (Claude Code, Codex, Gemini CLI, Copilot) when available on PATH, falling back to API providers automatically.
+The tool uses an **explicit mode/provider model**: the user chooses `cli` or `api`, then chooses a provider within that mode. The program never switches modes automatically.
 
 ## Commands
 
 ```bash
 # Setup
 python -m venv myenv && source myenv/bin/activate && pip install -r requirements.txt
-cp .env.template .env  # then fill in API keys (only needed for API fallback)
+cp .env.template .env  # then fill in API keys if you plan to use API mode
 
 # Run as background service
-./start_paper_summariser.sh [provider] [model]   # e.g. claude, gemini, codex, copilot, openai
+./start_paper_summariser.sh                      # default: cli claude
+./start_paper_summariser.sh [mode] [provider] [model]
 ./stop_paper_summariser.sh
 
 # Run directly (foreground, for debugging)
 source myenv/bin/activate
-python3 summarise.py claude                       # default: CLI-first
-python3 summarise.py claude-api                   # force API mode
-python3 summarise.py gemini gemini-2.5-flash      # specific model
+python3 summarise.py                              # default: cli claude
+python3 summarise.py cli claude
+python3 summarise.py api claude
+python3 summarise.py cli gemini gemini-2.5-flash
+python3 summarise.py api openai gpt-5.2
 
 # Tail logs while running
 tail -f logs/history.log
@@ -41,7 +44,7 @@ There are no automated tests.
   - `base.py` — `Provider` base class defining the interface: `setup()`, `process_document()`, `get_max_context_size()`, `supports_direct_pdf()`.
   - `api.py` — API providers: `ClaudeAPI`, `OpenAIAPI`, `GeminiAPI`, `PerplexityAPI`, `OllamaAPI`. Each uses its SDK directly. Gemini uses `system_instruction` parameter. Perplexity uses the OpenAI-compatible endpoint.
   - `cli.py` — CLI providers: `CLIProvider` base class with `ClaudeCLI`, `CodexCLI`, `GeminiCLI`, `CopilotCLI`. All use subprocess invocation in non-interactive mode.
-  - `__init__.py` — `create_provider()` factory with auto-detection logic: CLI-first names check PATH before falling back to API.
+  - `__init__.py` — `create_provider(mode, provider_name, config)` factory with explicit registries and prerequisite validation.
 
 ### Processing Pipeline
 
@@ -58,19 +61,20 @@ Metadata is extracted once per file and passed to both `save_summary()` and `mov
 
 ### Provider Routing
 
+```text
+python3 summarise.py                 → cli claude
+python3 summarise.py cli claude      → ClaudeCLI
+python3 summarise.py cli gemini      → GeminiCLI
+python3 summarise.py cli codex       → CodexCLI
+python3 summarise.py cli copilot     → CopilotCLI
+python3 summarise.py api claude      → ClaudeAPI
+python3 summarise.py api gemini      → GeminiAPI
+python3 summarise.py api openai      → OpenAIAPI
+python3 summarise.py api perplexity  → PerplexityAPI
+python3 summarise.py api ollama      → OllamaAPI
 ```
-"claude" (default) → claude CLI on PATH? → Yes: ClaudeCLI
-                                          → No: ANTHROPIC_API_KEY set? → Yes: ClaudeAPI
-                                                                        → No: error
-"gemini"           → gemini CLI on PATH? → Yes: GeminiCLI → No: GeminiAPI (similar)
-"codex"            → CodexCLI (CLI only)
-"copilot"          → CopilotCLI (CLI only)
-"openai"           → OpenAIAPI (API only)
-"perplexity"       → PerplexityAPI (API only)
-"ollama"           → OllamaAPI (local)
-"claude-api"       → ClaudeAPI (explicit, bypasses CLI check)
-"gemini-api"       → GeminiAPI (explicit, bypasses CLI check)
-```
+
+If the selected mode/provider combination is invalid, the CLI binary is missing, or the required API key is absent, startup fails immediately.
 
 ### State Tracking
 
@@ -94,16 +98,16 @@ File-based, no database:
 1. Create a subclass of `Provider` in `providers/api.py`
 2. Set `default_model` and `default_context_size` class attributes
 3. Implement: `setup()`, `process_document()`, `supports_direct_pdf()`
-4. Add the provider name to the routing dicts in `providers/__init__.py`
+4. Add the provider name to `_API_PROVIDERS` in `providers/__init__.py`
 
 ### CLI Provider
 1. Create a subclass of `CLIProvider` in `providers/cli.py`
 2. Set class attributes: `cli_command`, `prompt_flag`, `extra_flags`, `model_flag`
-3. Add to `_CLI_ONLY_PROVIDERS` or `_CLI_FIRST_PROVIDERS` in `providers/__init__.py`
+3. Add to `_CLI_PROVIDERS` in `providers/__init__.py`
 
 ## Environment Variables
 
-API keys are loaded from `.env` via `python-dotenv`. Only needed when using API providers (or as fallback when CLI tools are unavailable):
+API keys are loaded from `.env` via `python-dotenv`. They are only needed when using API mode:
 - `ANTHROPIC_API_KEY` (Claude API)
 - `OPENAI_API_KEY` (OpenAI API)
 - `GOOGLE_API_KEY` (Gemini API)

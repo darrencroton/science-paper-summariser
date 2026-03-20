@@ -1,19 +1,12 @@
 """Provider package for the Science Paper Summariser.
 
-Auto-detects CLI tools on PATH and falls back to API providers when unavailable.
+Provider selection is explicit:
+    create_provider("cli", "claude")
+    create_provider("api", "openai")
 
-Provider routing:
-    "claude"         -> ClaudeCLI if available, else ClaudeAPI (default provider)
-    "codex"          -> CodexCLI (CLI only)
-    "gemini"         -> GeminiCLI if available, else GeminiAPI
-    "copilot"        -> CopilotCLI (CLI only)
-    "openai"         -> OpenAIAPI (API only; CLI equivalent is "codex")
-    "perplexity"     -> PerplexityAPI (API only)
-    "ollama"         -> OllamaAPI (local API)
-    "claude-api"     -> ClaudeAPI (explicit, bypasses auto-detection)
-    "openai-api"     -> OpenAIAPI (explicit)
-    "gemini-api"     -> GeminiAPI (explicit)
-    "perplexity-api" -> PerplexityAPI (explicit)
+The program never switches mode or provider automatically. The requested mode
+and provider must both be valid, and any missing prerequisite must fail
+immediately.
 """
 
 import logging
@@ -23,112 +16,92 @@ import shutil
 from .api import ClaudeAPI, OpenAIAPI, GeminiAPI, PerplexityAPI, OllamaAPI
 from .cli import ClaudeCLI, CodexCLI, GeminiCLI, CopilotCLI
 
-# Explicit API-only provider names (bypass auto-detection)
-_API_PROVIDERS = {
-    "claude-api": ClaudeAPI,
-    "openai": OpenAIAPI,
-    "openai-api": OpenAIAPI,
-    "gemini-api": GeminiAPI,
-    "perplexity": PerplexityAPI,
-    "perplexity-api": PerplexityAPI,
-    "ollama": OllamaAPI,
-}
-
-# CLI-first providers: try CLI tool, fall back to API if unavailable
-_CLI_FIRST_PROVIDERS = {
-    "claude": {
-        "cli": ClaudeCLI,
-        "api": ClaudeAPI,
-        "cli_command": "claude",
-        "api_key_env": "ANTHROPIC_API_KEY",
-    },
-    "gemini": {
-        "cli": GeminiCLI,
-        "api": GeminiAPI,
-        "cli_command": "gemini",
-        "api_key_env": "GOOGLE_API_KEY",
-    },
-}
-
-# CLI-only providers (no API fallback)
-_CLI_ONLY_PROVIDERS = {
+_CLI_PROVIDERS = {
+    "claude": ClaudeCLI,
+    "gemini": GeminiCLI,
     "codex": CodexCLI,
     "copilot": CopilotCLI,
 }
 
+_API_PROVIDERS = {
+    "claude": ClaudeAPI,
+    "gemini": GeminiAPI,
+    "openai": OpenAIAPI,
+    "perplexity": PerplexityAPI,
+    "ollama": OllamaAPI,
+}
 
-def detect_available_clis():
-    """Return a dict of CLI tool names to their paths, for all detected tools."""
-    tools = ["claude", "codex", "gemini", "copilot"]
-    available = {}
-    for tool in tools:
-        path = shutil.which(tool)
-        if path:
-            available[tool] = path
-    return available
+_API_KEY_ENV_VARS = {
+    "claude": "ANTHROPIC_API_KEY",
+    "gemini": "GOOGLE_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "perplexity": "PERPLEXITY_API_KEY",
+}
+
+SUPPORTED_MODES = ("cli", "api")
 
 
-def create_provider(provider_name, config=None):
-    """Create a provider instance with CLI-first auto-detection.
+def _registry_for_mode(mode):
+    """Return the provider registry for the selected mode."""
+    if mode == "cli":
+        return _CLI_PROVIDERS
+    if mode == "api":
+        return _API_PROVIDERS
+    raise ValueError(
+        f"Unknown mode '{mode}'. Supported modes: {', '.join(SUPPORTED_MODES)}."
+    )
 
-    CLI-first names (claude, gemini) check for the CLI tool on PATH first,
-    falling back to the corresponding API provider if the CLI is not found.
-    Explicit API names (claude-api, openai-api, etc.) bypass auto-detection.
 
-    Args:
-        provider_name: Provider identifier (e.g. "claude", "gemini-api").
-        config: Optional configuration dict (e.g. {"model": "claude-opus-4-6"}).
+def get_supported_provider_names(mode):
+    """Return the supported provider names for a mode."""
+    return tuple(sorted(_registry_for_mode(mode).keys()))
 
-    Returns:
-        A Provider instance ready to process documents.
 
-    Raises:
-        ValueError: If the provider name is unknown or required resources are missing.
-    """
+def _validate_prerequisites(mode, provider_name, provider_class):
+    """Fail early when the requested provider cannot run in the selected mode."""
+    if mode == "cli":
+        cli_command = provider_class.cli_command
+        if not shutil.which(cli_command):
+            raise ValueError(
+                f"Cannot start mode '{mode}' with provider '{provider_name}': "
+                f"required CLI binary '{cli_command}' was not found on PATH."
+            )
+        return
+
+    api_key_env = _API_KEY_ENV_VARS.get(provider_name)
+    if api_key_env and not os.getenv(api_key_env):
+        raise ValueError(
+            f"Cannot start mode '{mode}' with provider '{provider_name}': "
+            f"required environment variable '{api_key_env}' is not set."
+        )
+
+
+def create_provider(mode, provider_name, config=None):
+    """Create a provider instance for an explicit mode/provider selection."""
+    mode = mode.lower().strip()
     provider_name = provider_name.lower().strip()
 
-    # 1. Explicit API providers
-    if provider_name in _API_PROVIDERS:
-        provider_class = _API_PROVIDERS[provider_name]
-        logging.info(f"Using API provider: {provider_class.__name__}")
-        return provider_class(config)
+    registry = _registry_for_mode(mode)
+    if provider_name not in registry:
+        available = ", ".join(get_supported_provider_names(mode))
+        raise ValueError(
+            f"Provider '{provider_name}' is not supported in mode '{mode}'. "
+            f"Available {mode} providers: {available}"
+        )
 
-    # 2. CLI-only providers
-    if provider_name in _CLI_ONLY_PROVIDERS:
-        provider_class = _CLI_ONLY_PROVIDERS[provider_name]
-        logging.info(f"Using CLI provider: {provider_class.__name__}")
-        return provider_class(config)
+    provider_class = registry[provider_name]
+    _validate_prerequisites(mode, provider_name, provider_class)
 
-    # 3. CLI-first providers (try CLI, fall back to API)
-    if provider_name in _CLI_FIRST_PROVIDERS:
-        entry = _CLI_FIRST_PROVIDERS[provider_name]
-        cli_command = entry["cli_command"]
+    try:
+        provider = provider_class(config)
+    except Exception as exc:
+        raise ValueError(
+            f"Cannot start mode '{mode}' with provider '{provider_name}': {exc}"
+        ) from exc
 
-        if shutil.which(cli_command):
-            logging.info(f"'{cli_command}' CLI found on PATH — using CLI provider")
-            return entry["cli"](config)
-        else:
-            api_key_env = entry["api_key_env"]
-            if os.getenv(api_key_env):
-                logging.info(
-                    f"'{cli_command}' CLI not found — falling back to API provider "
-                    f"({api_key_env} is set)"
-                )
-                return entry["api"](config)
-            else:
-                raise ValueError(
-                    f"Cannot use '{provider_name}': '{cli_command}' CLI not found on PATH "
-                    f"and {api_key_env} is not set. "
-                    f"Either install the CLI tool or set the API key."
-                )
-
-    # Unknown provider
-    all_names = sorted(
-        set(_API_PROVIDERS.keys())
-        | set(_CLI_ONLY_PROVIDERS.keys())
-        | set(_CLI_FIRST_PROVIDERS.keys())
+    provider.mode = mode
+    provider.provider_name = provider_name
+    logging.info(
+        f"Using mode '{mode}' with provider '{provider_name}' ({provider_class.__name__})"
     )
-    raise ValueError(
-        f"Unknown provider: '{provider_name}'. "
-        f"Available providers: {', '.join(all_names)}"
-    )
+    return provider

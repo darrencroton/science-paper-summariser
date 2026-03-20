@@ -21,14 +21,13 @@ import signal
 import concurrent.futures
 from dotenv import load_dotenv
 from pathlib import Path
-from providers import create_provider
+from providers import SUPPORTED_MODES, create_provider, get_supported_provider_names
 
 # --- Configuration and Paths ---
 load_dotenv()
 
-# Provider and optional model from command-line arguments
-LLM_PROVIDER = sys.argv[1] if len(sys.argv) > 1 else "claude"
-LLM_MODEL = sys.argv[2] if len(sys.argv) > 2 else None
+DEFAULT_MODE = "cli"
+DEFAULT_PROVIDER = "claude"
 
 # Directory paths relative to the script location
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -49,6 +48,47 @@ shutdown_requested = False
 # --- Lazy-loaded marker-pdf model cache ---
 _marker_models = None
 MARKER_TIMEOUT = 300  # seconds before marker-pdf extraction is abandoned
+
+
+def format_usage():
+    """Return concise CLI usage guidance for the explicit mode/provider interface."""
+    return (
+        "Usage: python3 summarise.py\n"
+        "   or: python3 summarise.py <mode> <provider> [model]\n\n"
+        "Modes and providers:\n"
+        f"  cli: {', '.join(get_supported_provider_names('cli'))}\n"
+        f"  api: {', '.join(get_supported_provider_names('api'))}\n\n"
+        "Examples:\n"
+        "  python3 summarise.py\n"
+        "  python3 summarise.py cli claude\n"
+        "  python3 summarise.py cli codex gpt-5.4\n"
+        "  python3 summarise.py api openai gpt-5.2\n\n"
+        "Old one-argument invocations such as 'python3 summarise.py gemini' "
+        "are no longer supported."
+    )
+
+
+def parse_cli_args(argv):
+    """Parse command-line arguments for explicit mode/provider selection."""
+    arg_count = len(argv)
+    if arg_count == 0:
+        return DEFAULT_MODE, DEFAULT_PROVIDER, None
+    if arg_count not in (2, 3):
+        raise ValueError(format_usage())
+
+    mode = argv[0].lower().strip()
+    provider_name = argv[1].lower().strip()
+    model = argv[2].strip() if arg_count == 3 else None
+
+    if not mode or not provider_name:
+        raise ValueError(format_usage())
+    if mode not in SUPPORTED_MODES:
+        raise ValueError(
+            f"Invalid mode '{mode}'. Supported modes: {', '.join(SUPPORTED_MODES)}.\n\n"
+            f"{format_usage()}"
+        )
+
+    return mode, provider_name, model
 
 
 def _get_marker_models():
@@ -672,8 +712,11 @@ def process_file(file_path, keywords, template, provider):
     Returns (success, original_filename, error_message_or_None).
     """
     is_pdf = file_path.suffix.lower() == ".pdf"
+    provider_mode = getattr(provider, "mode", "unknown")
+    provider_name = getattr(provider, "provider_name", provider.__class__.__name__)
     logging.info(
-        f"Using provider: {provider.__class__.__name__}"
+        f"Using provider: mode={provider_mode}, requested={provider_name}, "
+        f"backend={provider.__class__.__name__}"
         + (f", Model: {provider.model}" if provider.model else "")
     )
 
@@ -740,17 +783,32 @@ def process_file(file_path, keywords, template, provider):
 
 # --- Main loop ---
 
-def main():
+def main(argv=None):
     """Main entry point: set up, create provider, monitor input directory, process files."""
     signal.signal(signal.SIGINT, handle_shutdown_signal)
     signal.signal(signal.SIGTERM, handle_shutdown_signal)
 
+    exit_code = 0
+    argv = sys.argv[1:] if argv is None else argv
+    setup_logging()
+
     try:
-        setup_logging()
-        model_info = f" with model {LLM_MODEL}" if LLM_MODEL else ""
+        mode, provider_name, model_override = parse_cli_args(argv)
         logging.info("--- Science Paper Summariser Starting ---")
         logging.info(f"Process ID: {os.getpid()}")
-        logging.info(f"Provider: {LLM_PROVIDER}{model_info}")
+        logging.info(
+            f"Startup selection: mode={mode}, provider={provider_name}, "
+            f"model_override={model_override or 'default'}"
+        )
+
+        # Validate and create provider before loading any project files.
+        provider_config = {"model": model_override} if model_override else {}
+        provider = create_provider(mode, provider_name, config=provider_config)
+        logging.info(
+            f"Provider ready: mode={mode}, provider={provider_name}, "
+            f"backend={provider.__class__.__name__}, "
+            f"model={provider.model or 'default'}"
+        )
 
         # Ensure all necessary directories exist
         for dir_path in [INPUT_DIR, OUTPUT_DIR, DONE_DIR, KNOWLEDGE_DIR, LOGS_DIR]:
@@ -761,14 +819,6 @@ def main():
         progress = load_progress()
         failed_files = load_failed_files()
         logging.info(f"Loaded {len(progress)} processed, {len(failed_files)} failed files")
-
-        # Create provider once for the session
-        provider_config = {"model": LLM_MODEL} if LLM_MODEL else {}
-        provider = create_provider(LLM_PROVIDER, config=provider_config)
-        logging.info(
-            f"Provider ready: {provider.__class__.__name__}"
-            + (f" (model: {provider.model})" if provider.model else "")
-        )
 
         logging.info(f"Monitoring: {INPUT_DIR.absolute()}")
         logging.info("--- Waiting for files (SIGTERM or Ctrl+C to exit) ---")
@@ -819,15 +869,21 @@ def main():
                     logging.critical("Pausing 15s before continuing...")
                     interruptible_sleep(15)
 
+    except ValueError as e:
+        exit_code = 2
+        logging.critical(str(e))
+        print(str(e), file=sys.stderr)
     except Exception as e:
+        exit_code = 1
         logging.critical(f"--- CRITICAL STARTUP ERROR: {e} ---", exc_info=True)
         print(
-            f"CRITICAL FALLBACK: {time.strftime('%Y-%m-%d %H:%M:%S')} - {e}",
+            f"CRITICAL ERROR: {time.strftime('%Y-%m-%d %H:%M:%S')} - {e}",
             file=sys.stderr,
         )
     finally:
         logging.info("--- Science Paper Summariser Stopped ---\n")
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

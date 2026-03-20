@@ -1,157 +1,199 @@
 # Science Paper Summariser
 
-A Python tool that uses LLMs to automatically summarise scientific papers, following an exact template and hashtag list. The tool monitors an input directory for new PDFs or text files, processes them using your chosen provider, and generates markdown summaries with extensive referencing back to the source material.
+A Python tool that watches an `input/` directory for PDFs or text files, sends each paper to an LLM using a strict astronomy-focused template, validates the response shape, writes a markdown summary to `output/`, and moves the original file to `processed/`.
+
+Provider selection is explicit:
+
+```bash
+python3 summarise.py [mode] [provider] [model]
+```
+
+The program never switches mode or provider automatically. If the requested mode or provider cannot run, it exits immediately with a clear error.
 
 ## Features
 
-- **CLI-first provider model**: prefers AI CLI tools (Claude Code, Codex, Gemini CLI, Copilot) when available, with automatic API fallback
-- Monitors input directory for new PDFs/text files
-- Generates detailed paper summaries in markdown format
-- Includes exact quotes as footnotes for all statements
-- UK English with LaTeX support for equations
-- Creates glossary of technical terms
-- Moves processed files to `processed/` with collision-safe renaming
-- Comprehensive logging
-- Tracks files that failed after 3 processing attempts in failed.log
+- Explicit `cli` and `api` modes
+- No automatic provider switching
+- Monitors `input/` for PDF and text files
+- Generates markdown summaries with exact supporting quotes in footnotes
+- Uses UK English and LaTeX for equations
+- Includes glossary and tags sections
+- Moves processed files with collision-safe renaming
+- Logs successes, failures, and the last prompt sent to the model
 
 ## Directory Structure
 
-```
+```text
 science-paper-summariser/
 ├── input/               # Place papers here for processing
 ├── output/              # Generated summaries appear here
 ├── processed/           # Completed papers are moved here
 ├── logs/                # Processing history and errors
-├── providers/           # LLM provider implementations
-│   ├── __init__.py      # Factory with auto-detection logic
+├── providers/
+│   ├── __init__.py      # Explicit mode/provider factory
 │   ├── base.py          # Provider base class
-│   ├── api.py           # API providers (Claude, OpenAI, Gemini, Perplexity, Ollama)
-│   └── cli.py           # CLI providers (Claude Code, Codex, Gemini CLI, Copilot)
+│   ├── api.py           # API providers
+│   └── cli.py           # CLI providers
 ├── project_knowledge/
 │   ├── astronomy-keywords.txt
 │   └── paper-summary-template.md
-├── summarise.py         # Main orchestration
+├── summarise.py         # Main orchestration loop
 └── start/stop scripts
 ```
 
 ## Setup
 
-1. Create virtual environment:
-   ```bash
-   python -m venv myenv
-   source myenv/bin/activate
-   pip install -r requirements.txt
-   ```
+1. Create a virtual environment and install dependencies:
 
-2. **CLI tools (recommended):** Install one or more AI CLI tools. If a CLI tool is on your PATH, it will be used automatically:
-   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `claude`
-   - [Codex CLI](https://github.com/openai/codex) — `codex`
-   - [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `gemini`
-   - [GitHub Copilot CLI](https://docs.github.com/en/copilot) — `copilot`
+```bash
+python -m venv myenv
+source myenv/bin/activate
+pip install -r requirements.txt
+```
 
-3. **API keys (optional fallback):** If you don't have CLI tools installed, or want to use explicit API providers, add your keys to `.env` (see `.env.template`):
-   ```
-   ANTHROPIC_API_KEY=your_key_here
-   OPENAI_API_KEY=your_key_here
-   PERPLEXITY_API_KEY=your_key_here
-   GOOGLE_API_KEY=your_key_here
-   ```
+2. Create the runtime directories:
 
-4. Create required directories:
-   ```bash
-   mkdir -p input output processed logs
-   ```
-   Tip: create symbolic links to where you want to read/write the input/output
+```bash
+mkdir -p input output processed logs
+```
 
-5. Make the start and stop scripts executable:
-   ```bash
-   chmod +x start_paper_summariser.sh stop_paper_summariser.sh
-   ```
+3. Choose how you want to run the summariser:
+
+- `cli` mode requirements:
+  - Install the CLI you plan to use and make sure it is on `PATH`
+  - Supported CLI providers: `claude`, `gemini`, `codex`, `copilot`
+- `api` mode requirements:
+  - Add the required credentials to `.env`
+  - Supported API providers: `claude`, `gemini`, `openai`, `perplexity`, `ollama`
+  - Required environment variables:
+
+```bash
+ANTHROPIC_API_KEY=your_key_here
+GOOGLE_API_KEY=your_key_here
+OPENAI_API_KEY=your_key_here
+PERPLEXITY_API_KEY=your_key_here
+```
+
+`ollama` does not use an API key, but it does require a reachable local Ollama server, which defaults to `http://localhost:11434`.
+
+4. Make the scripts executable if needed:
+
+```bash
+chmod +x start_paper_summariser.sh stop_paper_summariser.sh
+```
 
 ## Usage
 
-1. Start the summariser with your preferred provider:
-   ```bash
-   # Use Claude (default) — tries Claude Code CLI first, falls back to API
-   ./start_paper_summariser.sh
+### `summarise.py`
 
-   # Use Gemini — tries Gemini CLI first, falls back to API
-   ./start_paper_summariser.sh gemini
+Defaults to Claude Code CLI:
 
-   # Use Codex CLI
-   ./start_paper_summariser.sh codex
+```bash
+python3 summarise.py
+```
 
-   # Use Copilot CLI
-   ./start_paper_summariser.sh copilot
+Equivalent explicit form:
 
-   # Use OpenAI API directly
-   ./start_paper_summariser.sh openai
+```bash
+python3 summarise.py cli claude
+```
 
-   # Force API mode (bypass CLI auto-detection)
-   ./start_paper_summariser.sh claude-api
-   ./start_paper_summariser.sh gemini-api
+More examples:
 
-   # Use Perplexity API
-   ./start_paper_summariser.sh perplexity
+```bash
+python3 summarise.py cli gemini
+python3 summarise.py cli codex gpt-5.4
+python3 summarise.py cli copilot
+python3 summarise.py api claude claude-sonnet-4-latest
+python3 summarise.py api openai gpt-5.2
+python3 summarise.py api gemini gemini-2.5-pro
+python3 summarise.py api perplexity sonar-pro
+python3 summarise.py api ollama llama3.2
+```
 
-   # Use Ollama (local)
-   ./start_paper_summariser.sh ollama
+Argument rules:
 
-   # Specify a model override for any provider
-   ./start_paper_summariser.sh claude claude-opus-4-6
-   ./start_paper_summariser.sh gemini gemini-2.5-flash
-   ./start_paper_summariser.sh openai gpt-5-mini
-   ```
+- No arguments: starts as `cli claude`
+- Two arguments: `mode provider`
+- Three arguments: `mode provider model`
+- One argument or more than three arguments: exits with usage guidance
 
-2. Place PDF or text files in the `input/` directory
+### `start_paper_summariser.sh`
 
-3. Monitor progress:
-   ```bash
-   tail -f logs/history.log
-   ```
-   Summaries appear in `output/`. Processed papers move to `processed/`
+The wrapper script uses the same argument order:
 
-4. Stop the summariser:
-   ```bash
-   ./stop_paper_summariser.sh
-   ```
+```bash
+./start_paper_summariser.sh
+./start_paper_summariser.sh cli gemini
+./start_paper_summariser.sh api openai gpt-5.2
+```
 
-## Providers
+When no arguments are given, the script starts `python3 summarise.py` which defaults to `cli claude`.
 
-### CLI-first (auto-detection)
+### Monitoring and shutdown
 
-| Name | CLI Tool | API Fallback | Notes |
-|------|----------|-------------|-------|
-| `claude` (default) | `claude` | Anthropic API | Requires Claude Code CLI or `ANTHROPIC_API_KEY` |
-| `gemini` | `gemini` | Google Gemini API | Requires Gemini CLI or `GOOGLE_API_KEY` |
+```bash
+tail -f logs/history.log
+./stop_paper_summariser.sh
+```
 
-### CLI-only
+Summaries are written to `output/`. Processed papers are moved to `processed/`.
 
-| Name | CLI Tool | Notes |
-|------|----------|-------|
-| `codex` | `codex` | OpenAI Codex CLI |
-| `copilot` | `copilot` | GitHub Copilot CLI |
+## Supported Providers
 
-### API-only
+### CLI mode
 
-| Name | Notes |
-|------|-------|
-| `openai` / `openai-api` | Requires `OPENAI_API_KEY` |
-| `perplexity` / `perplexity-api` | Requires `PERPLEXITY_API_KEY` |
-| `ollama` | Local at `localhost:11434` |
-| `claude-api` | Explicit API (bypasses CLI check) |
-| `gemini-api` | Explicit API (bypasses CLI check) |
+| Provider | Requirement | Notes |
+| --- | --- | --- |
+| `claude` | `claude` binary on `PATH` | Default mode/provider combination |
+| `gemini` | `gemini` binary on `PATH` | CLI only in this mode |
+| `codex` | `codex` binary on `PATH` | OpenAI Codex CLI |
+| `copilot` | `copilot` binary on `PATH` | GitHub Copilot CLI |
 
-Model override works for all providers — pass the model name as the second argument. If no model is specified, each provider uses its own sensible default. Check each provider's documentation for available models.
+### API mode
 
-NOTE: In my experience, the latest Claude Sonnet/Opus, Gemini Pro, and GPT give the best results via both CLI and API. Ollama can be hit and miss depending on the model and available memory.
+| Provider | Requirement | Notes |
+| --- | --- | --- |
+| `claude` | `ANTHROPIC_API_KEY` | Anthropic API |
+| `gemini` | `GOOGLE_API_KEY` | Google Gemini API |
+| `openai` | `OPENAI_API_KEY` | OpenAI API |
+| `perplexity` | `PERPLEXITY_API_KEY` | Perplexity API |
+| `ollama` | Local Ollama server | No API key required |
+
+Each provider keeps its own internal default model. Passing a third argument overrides that default.
+
+## Failure Behaviour
+
+- Invalid mode: exits immediately
+- Provider unsupported in the selected mode: exits immediately
+- CLI binary missing in `cli` mode: exits immediately
+- API key missing in `api` mode: exits immediately
+- No automatic CLI/API switching is attempted
+
+`logs/history.log` records the selected mode, requested provider, provider backend class, and active model so CLI and API runs are easy to distinguish.
+
+## Migration Note
+
+Old one-argument invocations no longer work. Replace commands such as:
+
+```bash
+python3 summarise.py gemini
+./start_paper_summariser.sh gemini
+python3 summarise.py claude-api
+```
+
+with explicit mode/provider forms:
+
+```bash
+python3 summarise.py cli gemini
+./start_paper_summariser.sh cli gemini
+python3 summarise.py api claude
+```
 
 ## Requirements
 
-- zsh shell
+- zsh
 - Python 3.9+
-- At least one of:
-  - An AI CLI tool on PATH (`claude`, `codex`, `gemini`, `copilot`)
-  - API keys for the chosen provider
-- python-dotenv
-- marker-pdf (for PDF text extraction when the provider doesn't support direct PDF upload)
+- `python-dotenv`
+- `marker-pdf` for PDF text extraction when the selected provider does not support direct PDF upload
+- The prerequisites for the specific mode/provider pair you choose
