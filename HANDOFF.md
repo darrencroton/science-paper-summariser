@@ -127,4 +127,4 @@ python3 test_validation/run_test.py claude "examples/Harikane et al.pdf" test_va
 - Wait for Claude CLI end-to-end test result. Then run remaining providers (codex, gemini, copilot). Score summaries against reference examples. Audit pipeline robustness. Commit when all tests pass (with user approval).
 
 ## Resume Prompt
-Continue this task using `HANDOFF.md` as the source of truth. Do not redo discovery. marker-pdf is resolved (1.5.2 + transformers<4.50). Run end-to-end tests with `test_validation/run_all_tests.py`, score summaries against reference examples in `examples/`, and audit pipeline robustness. Update `HANDOFF.md` if the plan changes.
+Continue this task using `HANDOFF.md` as the source of truth. Do not redo discovery. Codebase modernisation is committed. Remaining work: run Claude CLI end-to-end test (rate limit fixed by adding default model), score all summaries against reference examples in `examples/`, test API providers with actual API calls, and audit pipeline robustness (timeouts, error handling). Test scripts are in `test_validation/`. Update `HANDOFF.md` if the plan changes.
