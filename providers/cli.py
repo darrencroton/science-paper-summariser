@@ -18,6 +18,9 @@ from pathlib import Path
 from .base import Provider
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 class CLIProvider(Provider):
     """Base class for CLI-based providers.
 
@@ -34,6 +37,7 @@ class CLIProvider(Provider):
     prompt_flag = ""
     extra_flags = []
     model_flag = "--model"
+    effort_flag = ""
     default_context_size = 200_000
     default_timeout = 600
     env_blocklist = ()
@@ -48,15 +52,33 @@ class CLIProvider(Provider):
     def supports_direct_pdf(self):
         return False
 
-    def _build_command(self, prompt):
-        """Build the subprocess command list."""
-        cmd = [self.cli_command, *self.extra_flags]
+    @property
+    def effort(self):
+        return self.config.get("effort")
+
+    def _append_model_args(self, cmd):
+        """Append model-override arguments to the command."""
         if self.model and self.model_flag:
             cmd.extend([self.model_flag, self.model])
+
+    def _append_effort_args(self, cmd):
+        """Append effort arguments to the command."""
+        if self.effort and self.effort_flag:
+            cmd.extend([self.effort_flag, self.effort])
+
+    def _append_prompt_args(self, cmd, prompt):
+        """Append prompt arguments to the command."""
         if self.prompt_flag:
             cmd.extend([self.prompt_flag, prompt])
         else:
             cmd.append(prompt)
+
+    def _build_command(self, prompt):
+        """Build the subprocess command list."""
+        cmd = [self.cli_command, *self.extra_flags]
+        self._append_model_args(cmd)
+        self._append_effort_args(cmd)
+        self._append_prompt_args(cmd, prompt)
         return cmd
 
     def _run_command(self, cmd, input_text=None):
@@ -121,6 +143,7 @@ class ClaudeCLI(CLIProvider):
     prompt_flag = "-p"
     extra_flags = ["--output-format", "text"]
     model_flag = "--model"
+    effort_flag = "--effort"
     default_model = "claude-sonnet-4-6"
     default_context_size = 200_000
     env_blocklist = ("ANTHROPIC_API_KEY",)
@@ -140,12 +163,27 @@ class CodexCLI(CLIProvider):
     default_timeout = 1800
     env_blocklist = ("OPENAI_API_KEY",)
 
-    def _build_command(self, prompt):
-        """Build command with codex-specific model config syntax."""
-        cmd = [self.cli_command, *self.extra_flags]
+    def _append_model_args(self, cmd):
+        """Append codex-specific model config syntax."""
         if self.model:
             cmd.extend(["-c", f'model="{self.model}"'])
+
+    def _append_effort_args(self, cmd):
+        """Append codex-specific reasoning-effort config syntax."""
+        if self.effort:
+            cmd.extend(["-c", f'model_reasoning_effort="{self.effort}"'])
+
+    def _append_prompt_args(self, cmd, prompt):
+        """Codex reads the prompt from stdin."""
+        del prompt
         cmd.extend(["-"])
+
+    def _build_command(self, prompt):
+        """Build command with codex-specific config syntax."""
+        cmd = [self.cli_command, *self.extra_flags]
+        self._append_model_args(cmd)
+        self._append_effort_args(cmd)
+        self._append_prompt_args(cmd, prompt)
         return cmd
 
     def process_document(self, content, is_pdf, system_prompt, user_prompt, max_tokens=12288):
@@ -199,6 +237,12 @@ class GeminiCLI(CLIProvider):
     default_context_size = 1_000_000
     env_blocklist = ("GOOGLE_API_KEY",)
 
+    def setup(self):
+        """Verify the CLI tool is available and warn about ignored effort config."""
+        super().setup()
+        if self.effort:
+            LOGGER.warning("[WARNING] Gemini CLI ignores --effort; using Gemini defaults.")
+
 
 class CopilotCLI(CLIProvider):
     """GitHub Copilot CLI provider.
@@ -211,4 +255,5 @@ class CopilotCLI(CLIProvider):
     prompt_flag = "-p"
     extra_flags = ["--allow-all-tools", "--output-format", "text", "--silent"]
     model_flag = "--model"
+    effort_flag = "--effort"
     default_context_size = 128_000

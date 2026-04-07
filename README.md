@@ -5,7 +5,7 @@ A Python tool that watches an `input/` directory for PDFs or text files, sends e
 Provider selection is explicit:
 
 ```bash
-python3 summarise.py [mode] [provider] [model]
+python3 summarise.py [mode] [provider] [model] [--effort level]
 ```
 
 ## Features
@@ -100,8 +100,11 @@ More examples:
 
 ```bash
 python3 summarise.py cli gemini
+python3 summarise.py cli claude --effort high
 python3 summarise.py cli codex gpt-5.4
+python3 summarise.py cli codex gpt-5.4 --effort medium
 python3 summarise.py cli copilot
+python3 summarise.py cli copilot gpt-5.2 --effort low
 python3 summarise.py api claude claude-sonnet-4-latest
 python3 summarise.py api openai gpt-5.2
 python3 summarise.py api gemini gemini-2.5-pro
@@ -114,7 +117,9 @@ Argument rules:
 - No arguments: starts as `cli claude`
 - Two arguments: `mode provider`
 - Three arguments: `mode provider model`
-- One argument or more than three arguments: exits with usage guidance
+- `--effort <level>` is optional in `cli` mode and supports `low`, `medium`, or `high`
+- `--effort` is rejected in `api` mode
+- Any invocation with exactly one positional argument or more than three positional arguments exits with usage guidance
 
 ### `start_paper_summariser.sh`
 
@@ -123,6 +128,7 @@ The wrapper script uses the same argument order:
 ```bash
 ./start_paper_summariser.sh
 ./start_paper_summariser.sh cli gemini
+./start_paper_summariser.sh cli claude --effort high
 ./start_paper_summariser.sh api openai gpt-5.2
 ```
 
@@ -143,10 +149,10 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 
 | Provider | Requirement | Notes |
 | --- | --- | --- |
-| `claude` | `claude` binary on `PATH` | Default mode/provider combination |
-| `gemini` | `gemini` binary on `PATH` | CLI only in this mode |
-| `codex` | `codex` binary on `PATH` | OpenAI Codex CLI |
-| `copilot` | `copilot` binary on `PATH` | GitHub Copilot CLI |
+| `claude` | `claude` binary on `PATH` | Supports `--effort low|medium|high` |
+| `gemini` | `gemini` binary on `PATH` | Ignores `--effort` and uses Gemini defaults |
+| `codex` | `codex` binary on `PATH` | Supports `--effort` via Codex config overrides |
+| `copilot` | `copilot` binary on `PATH` | Supports `--effort low|medium|high` |
 
 ### API mode
 
@@ -159,6 +165,7 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `ollama` | Local Ollama server | No API key required |
 
 Each provider keeps its own internal default model. Passing a third argument overrides that default.
+In `cli` mode you can also pass `--effort low|medium|high`. Effort is currently unsupported in `api` mode.
 
 ## Failure Behaviour
 

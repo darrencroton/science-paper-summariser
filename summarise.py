@@ -30,6 +30,7 @@ load_dotenv()
 
 DEFAULT_MODE = "cli"
 DEFAULT_PROVIDER = "claude"
+VALID_EFFORT_LEVELS = ("low", "medium", "high")
 
 # Directory paths relative to the script location
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -100,14 +101,17 @@ def format_usage():
     """Return concise CLI usage guidance for the explicit mode/provider interface."""
     return (
         "Usage: python3 summarise.py\n"
-        "   or: python3 summarise.py <mode> <provider> [model]\n\n"
+        "   or: python3 summarise.py <mode> <provider> [model] [--effort <level>]\n\n"
         "Modes and providers:\n"
         f"  cli: {', '.join(get_supported_provider_names('cli'))}\n"
         f"  api: {', '.join(get_supported_provider_names('api'))}\n\n"
+        f"Effort levels (cli mode only): {', '.join(VALID_EFFORT_LEVELS)}\n\n"
         "Examples:\n"
         "  python3 summarise.py\n"
         "  python3 summarise.py cli claude\n"
-        "  python3 summarise.py cli codex gpt-5.4\n"
+        "  python3 summarise.py cli claude --effort high\n"
+        "  python3 summarise.py cli codex gpt-5.4 --effort medium\n"
+        "  python3 summarise.py cli copilot --effort low\n"
         "  python3 summarise.py api openai gpt-5.2\n\n"
         "Old one-argument invocations such as 'python3 summarise.py gemini' "
         "are no longer supported."
@@ -116,15 +120,46 @@ def format_usage():
 
 def parse_cli_args(argv):
     """Parse command-line arguments for explicit mode/provider selection."""
-    arg_count = len(argv)
-    if arg_count == 0:
-        return DEFAULT_MODE, DEFAULT_PROVIDER, None
-    if arg_count not in (2, 3):
-        raise ValueError(format_usage())
+    effort = None
+    positional_args = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--effort":
+            if effort is not None:
+                raise ValueError(
+                    "The --effort option may only be provided once.\n\n"
+                    f"{format_usage()}"
+                )
+            if index + 1 >= len(argv):
+                raise ValueError(
+                    "The --effort option requires a value.\n\n"
+                    f"{format_usage()}"
+                )
+            effort = argv[index + 1].strip().lower()
+            if not effort:
+                raise ValueError(
+                    "The --effort option requires a non-blank value.\n\n"
+                    f"{format_usage()}"
+                )
+            index += 2
+            continue
 
-    mode = argv[0].lower().strip()
-    provider_name = argv[1].lower().strip()
-    model = argv[2].strip() if arg_count == 3 else None
+        positional_args.append(arg)
+        index += 1
+
+    arg_count = len(positional_args)
+    if arg_count == 0:
+        mode = DEFAULT_MODE
+        provider_name = DEFAULT_PROVIDER
+        model = None
+    else:
+        if arg_count not in (2, 3):
+            raise ValueError(format_usage())
+
+        mode = positional_args[0].lower().strip()
+        provider_name = positional_args[1].lower().strip()
+        model = positional_args[2].strip() if arg_count == 3 else None
 
     if not mode or not provider_name:
         raise ValueError(format_usage())
@@ -133,8 +168,41 @@ def parse_cli_args(argv):
             f"Invalid mode '{mode}'. Supported modes: {', '.join(SUPPORTED_MODES)}.\n\n"
             f"{format_usage()}"
         )
+    if effort is not None:
+        if effort not in VALID_EFFORT_LEVELS:
+            raise ValueError(
+                f"Invalid effort '{effort}'. Supported effort levels: "
+                f"{', '.join(VALID_EFFORT_LEVELS)}.\n\n"
+                f"{format_usage()}"
+            )
+        if mode != "cli":
+            raise ValueError(
+                "The --effort option is only supported in cli mode.\n\n"
+                f"{format_usage()}"
+            )
 
-    return mode, provider_name, model
+    return mode, provider_name, model, effort
+
+
+def build_provider_config(model_override=None, effort=None):
+    """Build provider configuration for the selected startup options."""
+    provider_config = {}
+    if model_override:
+        provider_config["model"] = model_override
+    if effort:
+        provider_config["effort"] = effort
+    return provider_config
+
+
+def validate_startup_selection(argv):
+    """Parse CLI args and validate that the requested provider can be created."""
+    mode, provider_name, model_override, effort = parse_cli_args(argv)
+    provider = create_provider(
+        mode,
+        provider_name,
+        config=build_provider_config(model_override=model_override, effort=effort),
+    )
+    return mode, provider_name, model_override, effort, provider
 
 
 def _get_marker_models():
@@ -1069,21 +1137,20 @@ def main(argv=None):
     setup_logging()
 
     try:
-        mode, provider_name, model_override = parse_cli_args(argv)
+        mode, provider_name, model_override, effort, provider = validate_startup_selection(argv)
         logging.info("--- Science Paper Summariser Starting ---")
         logging.info(f"Process ID: {os.getpid()}")
         logging.info(
             f"Startup selection: mode={mode}, provider={provider_name}, "
-            f"model_override={model_override or 'default'}"
+            f"model_override={model_override or 'default'}, "
+            f"effort={effort or 'default'}"
         )
 
-        # Validate and create provider before loading any project files.
-        provider_config = {"model": model_override} if model_override else {}
-        provider = create_provider(mode, provider_name, config=provider_config)
         logging.info(
             f"Provider ready: mode={mode}, provider={provider_name}, "
             f"backend={provider.__class__.__name__}, "
-            f"model={provider.model or 'default'}"
+            f"model={provider.model or 'default'}, "
+            f"effort={getattr(provider, 'effort', None) or 'default'}"
         )
 
         # Ensure all necessary directories exist
