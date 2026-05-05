@@ -60,6 +60,7 @@ mkdir -p input output processed logs
 - `cli` mode requirements:
   - Install the CLI you plan to use and make sure it is on `PATH`
   - Supported CLI providers: `claude`, `gemini`, `codex`, `copilot`, `opencode`
+  - OpenCode must already have an authenticated or configured model available, or you must pass a `provider/model` override
 - `api` mode requirements:
   - Add the required credentials to `.env`
   - Supported API providers: `claude`, `gemini`, `openai`, `perplexity`, `ollama`
@@ -105,14 +106,14 @@ python3 summarise.py cli codex gpt-5.4
 python3 summarise.py cli codex gpt-5.4 --effort medium
 python3 summarise.py cli copilot
 python3 summarise.py cli copilot gpt-5.2 --effort low
+python3 summarise.py cli opencode
+python3 summarise.py cli opencode ollama/llama3.2
+python3 summarise.py cli opencode lmstudio/google/gemma-3n-e4b --effort high
 python3 summarise.py api claude claude-sonnet-4-latest
 python3 summarise.py api openai gpt-5.2
 python3 summarise.py api gemini gemini-2.5-pro
 python3 summarise.py api perplexity sonar-pro
 python3 summarise.py api ollama llama3.2
-python3 summarise.py cli opencode
-python3 summarise.py cli opencode ollama/llama3.2
-python3 summarise.py cli opencode lmstudio/mistral --effort high
 ```
 
 Argument rules:
@@ -132,6 +133,7 @@ The wrapper script uses the same argument order:
 ./start_paper_summariser.sh
 ./start_paper_summariser.sh cli gemini
 ./start_paper_summariser.sh cli claude --effort high
+./start_paper_summariser.sh cli opencode ollama/llama3.2
 ./start_paper_summariser.sh api openai gpt-5.2
 ```
 
@@ -156,7 +158,7 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `gemini` | `gemini` binary on `PATH` | Ignores `--effort` and uses Gemini defaults |
 | `codex` | `codex` binary on `PATH` | Supports `--effort` via Codex config overrides |
 | `copilot` | `copilot` binary on `PATH` | Supports `--effort low|medium|high` |
-| `opencode` | `opencode` binary on `PATH` | `--model provider/model`; supports `--effort low\|medium\|high` via `--variant` |
+| `opencode` | `opencode` binary on `PATH` and a configured OpenCode model | Uses `opencode run --format json`; `model` maps to `--model provider/model`; `--effort` maps to provider-specific `--variant` |
 
 ### API mode
 
@@ -168,7 +170,7 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `perplexity` | `PERPLEXITY_API_KEY` | Perplexity API |
 | `ollama` | Local Ollama server | No API key required |
 
-Each provider keeps its own internal default model. Passing a third argument overrides that default.
+Each provider keeps its own default model or model-loading behaviour. Passing a third argument overrides that default. OpenCode uses its own model-loading order: `--model`, configured default model, last used model, then internal priority.
 In `cli` mode you can also pass `--effort low|medium|high`. Effort is currently unsupported in `api` mode.
 
 ### Using OpenCode with local LLMs
@@ -177,10 +179,18 @@ OpenCode connects to locally-hosted models through [LM Studio](https://lmstudio.
 
 ```bash
 python3 summarise.py cli opencode ollama/llama3.2
-python3 summarise.py cli opencode lmstudio/mistral-7b
+python3 summarise.py cli opencode lmstudio/google/gemma-3n-e4b
 ```
 
-Any model reachable through OpenCode's provider configuration — local or cloud — is available without any other changes.
+Any model reachable through OpenCode's provider configuration, local or cloud, is available without any other changes. `--effort` is forwarded to OpenCode as `--variant`; supported variant names depend on the selected OpenCode provider and model.
+
+## Tests
+
+Run the focused unit tests with the project virtualenv:
+
+```bash
+./myenv/bin/python -m unittest tests/test_effort_support.py
+```
 
 ## Failure Behaviour
 

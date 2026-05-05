@@ -139,7 +139,7 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "run", "--dangerously-skip-permissions", "--format", "json", "prompt"],
+            ["opencode", "run", "--format", "json", "prompt"],
         )
 
     @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
@@ -148,8 +148,7 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "run", "--dangerously-skip-permissions", "--format", "json",
-             "--model", "ollama/llama3.2", "prompt"],
+            ["opencode", "run", "--format", "json", "--model", "ollama/llama3.2", "prompt"],
         )
 
     @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
@@ -158,9 +157,30 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "run", "--dangerously-skip-permissions", "--format", "json",
-             "--variant", "high", "prompt"],
+            ["opencode", "run", "--format", "json", "--variant", "high", "prompt"],
         )
+
+    def test_opencode_extracts_text_from_json_events(self):
+        raw = "\n".join(
+            [
+                '{"type":"step_start","part":{"type":"step-start"}}',
+                '{"type":"text","part":{"type":"text","text":"# Title\\n"}}',
+                '{"type":"text","part":{"type":"text","text":"Body"}}',
+                '{"type":"step_finish","part":{"type":"step-finish"}}',
+            ]
+        )
+
+        self.assertEqual(OpenCodeCLI._extract_text_from_json_events(raw), "# Title\nBody")
+
+    def test_opencode_rejects_malformed_json_events(self):
+        with self.assertRaisesRegex(ValueError, "malformed JSON event"):
+            OpenCodeCLI._extract_text_from_json_events('{"type":"text"')
+
+    def test_opencode_rejects_json_without_text_events(self):
+        with self.assertRaisesRegex(ValueError, "contained no text events"):
+            OpenCodeCLI._extract_text_from_json_events(
+                '{"type":"step_finish","part":{"type":"step-finish"}}'
+            )
 
     @patch("providers.shutil.which", return_value="/usr/bin/opencode")
     @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")

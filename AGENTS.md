@@ -26,13 +26,17 @@ python3 summarise.py                              # default: cli claude
 python3 summarise.py cli claude
 python3 summarise.py api claude
 python3 summarise.py cli gemini gemini-2.5-flash
+python3 summarise.py cli opencode ollama/llama3.2
 python3 summarise.py api openai gpt-5.2
+
+# Tests
+./myenv/bin/python -m unittest tests/test_effort_support.py
 
 # Tail logs while running
 tail -f logs/history.log
 ```
 
-There are no automated tests.
+The focused unit tests cover CLI argument parsing and CLI provider command construction.
 
 ## Architecture
 
@@ -104,7 +108,7 @@ File-based, no database:
 ### CLI Provider
 1. Create a subclass of `CLIProvider` in `providers/cli.py`
 2. Set class attributes: `cli_command`, `prompt_flag`, `extra_flags`, `model_flag`
-3. Override `setup()` if the provider needs to warn about unsupported features (e.g. OpenCodeCLI warns when a model override is requested but cannot be forwarded)
+3. Override command-building or output parsing methods when the CLI has provider-specific syntax
 4. Add to `_CLI_PROVIDERS` in `providers/__init__.py`
 
 ## Environment Variables
@@ -116,7 +120,7 @@ API keys are loaded from `.env` via `python-dotenv`. They are only needed when u
 - `PERPLEXITY_API_KEY` (Perplexity API)
 - Ollama requires no key (local at `localhost:11434`)
 - CLI tools (`claude`, `codex`, `gemini`, `copilot`, `opencode`) require no API keys
-- OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`); effort maps to `--variant`
+- OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`); effort maps to provider-specific `--variant` values
 
 ## Directory Notes
 

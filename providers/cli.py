@@ -1,6 +1,6 @@
 """CLI-based LLM providers for the Science Paper Summariser.
 
-Providers invoke AI CLI tools (claude, codex, gemini, copilot) via subprocess
+Providers invoke AI CLI tools (claude, codex, gemini, copilot, opencode) via subprocess
 in non-interactive mode. All CLI providers share a common base pattern: combine
 system and user prompts into a single text prompt and capture stdout.
 
@@ -263,8 +263,8 @@ class CopilotCLI(CLIProvider):
 class OpenCodeCLI(CLIProvider):
     """OpenCode CLI provider.
 
-    Invoked as: opencode run --dangerously-skip-permissions --format json
-                    [--model provider/model] [--variant effort] <prompt>
+    Invoked as: opencode run --format json
+                    [--model provider/model] [--variant variant] <prompt>
 
     Supports local LLMs configured in opencode (e.g. via LM Studio at
     http://127.0.0.1:1234/v1 or Ollama at http://localhost:11434/v1).
@@ -273,15 +273,47 @@ class OpenCodeCLI(CLIProvider):
 
     cli_command = "opencode"
     prompt_flag = ""  # Prompt is positional for the run subcommand
-    extra_flags = ["run", "--dangerously-skip-permissions", "--format", "json"]
+    extra_flags = ["run", "--format", "json"]
     model_flag = "--model"
     effort_flag = "--variant"
     default_context_size = 128_000
 
+    @staticmethod
+    def _extract_text_from_json_events(raw):
+        """Extract assistant text from OpenCode newline-delimited JSON events."""
+        text_parts = []
+        event_types = []
+
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"opencode returned malformed JSON event: {exc.msg}") from exc
+
+            event_type = event.get("type")
+            if event_type:
+                event_types.append(event_type)
+
+            part = event.get("part")
+            if not isinstance(part, dict):
+                continue
+
+            text = part.get("text")
+            if isinstance(text, str) and (event_type == "text" or part.get("type") == "text"):
+                text_parts.append(text)
+
+        output = "".join(text_parts)
+        if not output.strip():
+            seen = ", ".join(event_types) if event_types else "none"
+            raise ValueError(f"opencode JSON output contained no text events; event types: {seen}")
+
+        return output
+
     def process_document(self, content, is_pdf, system_prompt, user_prompt, max_tokens=12288):
-        """Run opencode and extract the response text from JSON output."""
+        """Run OpenCode and extract response text from JSON event output."""
         raw = super().process_document(content, is_pdf, system_prompt, user_prompt, max_tokens)
-        data = json.loads(raw)
-        if "response" not in data:
-            raise ValueError(f"opencode JSON missing 'response' key; got: {list(data.keys())}")
-        return data["response"]
+        return self._extract_text_from_json_events(raw)

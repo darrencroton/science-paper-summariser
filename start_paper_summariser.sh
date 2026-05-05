@@ -10,6 +10,7 @@ mkdir -p input
 #   ./start_paper_summariser.sh
 #   ./start_paper_summariser.sh cli gemini
 #   ./start_paper_summariser.sh cli claude --effort high
+#   ./start_paper_summariser.sh cli opencode ollama/llama3.2
 #   ./start_paper_summariser.sh api openai gpt-5.2
 # Default with no arguments: cli claude
 
