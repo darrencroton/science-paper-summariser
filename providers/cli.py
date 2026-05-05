@@ -260,7 +260,7 @@ class CopilotCLI(CLIProvider):
 
 
 class OpenCodeCLI(CLIProvider):
-    """OpenCode CLI provider (opencode -f text -q -p <prompt>).
+    """OpenCode CLI provider (opencode -q -p <prompt>).
 
     OpenCode has no CLI flag for model selection; the active model is
     configured in ~/.config/opencode/opencode.json. Supports local LLMs
@@ -270,7 +270,7 @@ class OpenCodeCLI(CLIProvider):
 
     cli_command = "opencode"
     prompt_flag = "-p"
-    extra_flags = ["-f", "text", "-q"]
+    extra_flags = ["-q"]
     model_flag = ""  # No CLI model flag; configure model in opencode.json
     default_context_size = 128_000
 

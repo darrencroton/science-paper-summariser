@@ -139,7 +139,7 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "-f", "text", "-q", "-p", "prompt"],
+            ["opencode", "-q", "-p", "prompt"],
         )
 
     @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
@@ -149,7 +149,7 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "-f", "text", "-q", "-p", "prompt"],
+            ["opencode", "-q", "-p", "prompt"],
         )
         self.assertIn("does not support model selection via CLI flags", captured_logs.output[0])
 
@@ -159,7 +159,7 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "-f", "text", "-q", "-p", "prompt"],
+            ["opencode", "-q", "-p", "prompt"],
         )
 
     @patch("providers.shutil.which", return_value="/usr/bin/opencode")
