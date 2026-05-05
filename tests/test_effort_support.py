@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from providers.cli import ClaudeCLI, CodexCLI, CopilotCLI, GeminiCLI
+from providers.cli import ClaudeCLI, CodexCLI, CopilotCLI, GeminiCLI, OpenCodeCLI
 from providers import create_provider
 from summarise import build_provider_config, parse_cli_args, validate_startup_selection
 
@@ -130,6 +130,45 @@ class CliProviderEffortTests(unittest.TestCase):
 
         self.assertEqual(provider.config["effort"], "high")
         self.assertEqual(provider.effort, "high")
+
+
+class OpenCodeCLITests(unittest.TestCase):
+    @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
+    def test_opencode_builds_command_without_model_or_effort(self, _mock_which):
+        provider = OpenCodeCLI({})
+
+        self.assertEqual(
+            provider._build_command("prompt"),
+            ["opencode", "-f", "text", "-q", "-p", "prompt"],
+        )
+
+    @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
+    def test_opencode_warns_and_ignores_model_override(self, _mock_which):
+        with self.assertLogs("providers.cli", level="WARNING") as captured_logs:
+            provider = OpenCodeCLI({"model": "some-local-model"})
+
+        self.assertEqual(
+            provider._build_command("prompt"),
+            ["opencode", "-f", "text", "-q", "-p", "prompt"],
+        )
+        self.assertIn("does not support model selection via CLI flags", captured_logs.output[0])
+
+    @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
+    def test_opencode_ignores_effort(self, _mock_which):
+        provider = OpenCodeCLI({"effort": "high"})
+
+        self.assertEqual(
+            provider._build_command("prompt"),
+            ["opencode", "-f", "text", "-q", "-p", "prompt"],
+        )
+
+    @patch("providers.shutil.which", return_value="/usr/bin/opencode")
+    @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
+    def test_create_provider_registers_opencode(self, _mock_cli_which, _mock_provider_which):
+        provider = create_provider("cli", "opencode")
+
+        self.assertEqual(provider.provider_name, "opencode")
+        self.assertEqual(provider.mode, "cli")
 
 
 if __name__ == "__main__":

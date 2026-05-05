@@ -257,3 +257,28 @@ class CopilotCLI(CLIProvider):
     model_flag = "--model"
     effort_flag = "--effort"
     default_context_size = 128_000
+
+
+class OpenCodeCLI(CLIProvider):
+    """OpenCode CLI provider (opencode -f text -q -p <prompt>).
+
+    OpenCode has no CLI flag for model selection; the active model is
+    configured in ~/.config/opencode/opencode.json. Supports local LLMs
+    via LM Studio (http://127.0.0.1:1234/v1) or Ollama
+    (http://localhost:11434/v1) when configured as a custom provider.
+    """
+
+    cli_command = "opencode"
+    prompt_flag = "-p"
+    extra_flags = ["-f", "text", "-q"]
+    model_flag = ""  # No CLI model flag; configure model in opencode.json
+    default_context_size = 128_000
+
+    def setup(self):
+        """Verify opencode CLI is available and warn if model override requested."""
+        super().setup()
+        if self.model:
+            LOGGER.warning(
+                "[WARNING] OpenCode CLI does not support model selection via CLI flags. "
+                "Configure the model in ~/.config/opencode/opencode.json instead."
+            )

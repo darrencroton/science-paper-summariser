@@ -43,7 +43,7 @@ There are no automated tests.
 - **`providers/`** — Provider package with clean separation of API and CLI providers:
   - `base.py` — `Provider` base class defining the interface: `setup()`, `process_document()`, `get_max_context_size()`, `supports_direct_pdf()`.
   - `api.py` — API providers: `ClaudeAPI`, `OpenAIAPI`, `GeminiAPI`, `PerplexityAPI`, `OllamaAPI`. Each uses its SDK directly. Gemini uses `system_instruction` parameter. Perplexity uses the OpenAI-compatible endpoint.
-  - `cli.py` — CLI providers: `CLIProvider` base class with `ClaudeCLI`, `CodexCLI`, `GeminiCLI`, `CopilotCLI`. All use subprocess invocation in non-interactive mode.
+  - `cli.py` — CLI providers: `CLIProvider` base class with `ClaudeCLI`, `CodexCLI`, `GeminiCLI`, `CopilotCLI`, `OpenCodeCLI`. All use subprocess invocation in non-interactive mode.
   - `__init__.py` — `create_provider(mode, provider_name, config)` factory with explicit registries and prerequisite validation.
 
 ### Processing Pipeline
@@ -67,6 +67,7 @@ python3 summarise.py cli claude      → ClaudeCLI
 python3 summarise.py cli gemini      → GeminiCLI
 python3 summarise.py cli codex       → CodexCLI
 python3 summarise.py cli copilot     → CopilotCLI
+python3 summarise.py cli opencode    → OpenCodeCLI
 python3 summarise.py api claude      → ClaudeAPI
 python3 summarise.py api gemini      → GeminiAPI
 python3 summarise.py api openai      → OpenAIAPI
@@ -103,7 +104,8 @@ File-based, no database:
 ### CLI Provider
 1. Create a subclass of `CLIProvider` in `providers/cli.py`
 2. Set class attributes: `cli_command`, `prompt_flag`, `extra_flags`, `model_flag`
-3. Add to `_CLI_PROVIDERS` in `providers/__init__.py`
+3. Override `setup()` if the provider needs to warn about unsupported features (e.g. OpenCodeCLI warns when a model override is requested but cannot be forwarded)
+4. Add to `_CLI_PROVIDERS` in `providers/__init__.py`
 
 ## Environment Variables
 
@@ -113,7 +115,8 @@ API keys are loaded from `.env` via `python-dotenv`. They are only needed when u
 - `GOOGLE_API_KEY` (Gemini API)
 - `PERPLEXITY_API_KEY` (Perplexity API)
 - Ollama requires no key (local at `localhost:11434`)
-- CLI tools (`claude`, `codex`, `gemini`, `copilot`) require no API keys
+- CLI tools (`claude`, `codex`, `gemini`, `copilot`, `opencode`) require no API keys
+- OpenCode model selection is configured in `~/.config/opencode/opencode.json`, not via environment variables
 
 ## Directory Notes
 

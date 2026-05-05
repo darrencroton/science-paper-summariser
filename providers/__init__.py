@@ -14,13 +14,14 @@ import os
 import shutil
 
 from .api import ClaudeAPI, OpenAIAPI, GeminiAPI, PerplexityAPI, OllamaAPI
-from .cli import ClaudeCLI, CodexCLI, GeminiCLI, CopilotCLI
+from .cli import ClaudeCLI, CodexCLI, GeminiCLI, CopilotCLI, OpenCodeCLI
 
 _CLI_PROVIDERS = {
     "claude": ClaudeCLI,
     "gemini": GeminiCLI,
     "codex": CodexCLI,
     "copilot": CopilotCLI,
+    "opencode": OpenCodeCLI,
 }
 
 _API_PROVIDERS = {
