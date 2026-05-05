@@ -139,27 +139,27 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "-q", "-p", "prompt"],
+            ["opencode", "run", "--dangerously-skip-permissions", "--format", "json", "prompt"],
         )
 
     @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
-    def test_opencode_warns_and_ignores_model_override(self, _mock_which):
-        with self.assertLogs("providers.cli", level="WARNING") as captured_logs:
-            provider = OpenCodeCLI({"model": "some-local-model"})
+    def test_opencode_builds_command_with_model(self, _mock_which):
+        provider = OpenCodeCLI({"model": "ollama/llama3.2"})
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "-q", "-p", "prompt"],
+            ["opencode", "run", "--dangerously-skip-permissions", "--format", "json",
+             "--model", "ollama/llama3.2", "prompt"],
         )
-        self.assertIn("does not support model selection via CLI flags", captured_logs.output[0])
 
     @patch("providers.cli.shutil.which", return_value="/usr/bin/opencode")
-    def test_opencode_ignores_effort(self, _mock_which):
+    def test_opencode_builds_command_with_effort(self, _mock_which):
         provider = OpenCodeCLI({"effort": "high"})
 
         self.assertEqual(
             provider._build_command("prompt"),
-            ["opencode", "-q", "-p", "prompt"],
+            ["opencode", "run", "--dangerously-skip-permissions", "--format", "json",
+             "--variant", "high", "prompt"],
         )
 
     @patch("providers.shutil.which", return_value="/usr/bin/opencode")

@@ -116,7 +116,7 @@ API keys are loaded from `.env` via `python-dotenv`. They are only needed when u
 - `PERPLEXITY_API_KEY` (Perplexity API)
 - Ollama requires no key (local at `localhost:11434`)
 - CLI tools (`claude`, `codex`, `gemini`, `copilot`, `opencode`) require no API keys
-- OpenCode model selection is configured in `~/.config/opencode/opencode.json`, not via environment variables
+- OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`); effort maps to `--variant`
 
 ## Directory Notes
 

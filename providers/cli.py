@@ -8,6 +8,7 @@ CLI providers never support direct PDF input — text extraction via marker-pdf
 is always performed before the prompt is constructed.
 """
 
+import json
 import logging
 import os
 import shutil
@@ -260,25 +261,27 @@ class CopilotCLI(CLIProvider):
 
 
 class OpenCodeCLI(CLIProvider):
-    """OpenCode CLI provider (opencode -q -p <prompt>).
+    """OpenCode CLI provider.
 
-    OpenCode has no CLI flag for model selection; the active model is
-    configured in ~/.config/opencode/opencode.json. Supports local LLMs
-    via LM Studio (http://127.0.0.1:1234/v1) or Ollama
-    (http://localhost:11434/v1) when configured as a custom provider.
+    Invoked as: opencode run --dangerously-skip-permissions --format json
+                    [--model provider/model] [--variant effort] <prompt>
+
+    Supports local LLMs configured in opencode (e.g. via LM Studio at
+    http://127.0.0.1:1234/v1 or Ollama at http://localhost:11434/v1).
+    Model format is provider/model (e.g. ollama/llama3.2).
     """
 
     cli_command = "opencode"
-    prompt_flag = "-p"
-    extra_flags = ["-q"]
-    model_flag = ""  # No CLI model flag; configure model in opencode.json
+    prompt_flag = ""  # Prompt is positional for the run subcommand
+    extra_flags = ["run", "--dangerously-skip-permissions", "--format", "json"]
+    model_flag = "--model"
+    effort_flag = "--variant"
     default_context_size = 128_000
 
-    def setup(self):
-        """Verify opencode CLI is available and warn if model override requested."""
-        super().setup()
-        if self.model:
-            LOGGER.warning(
-                "[WARNING] OpenCode CLI does not support model selection via CLI flags. "
-                "Configure the model in ~/.config/opencode/opencode.json instead."
-            )
+    def process_document(self, content, is_pdf, system_prompt, user_prompt, max_tokens=12288):
+        """Run opencode and extract the response text from JSON output."""
+        raw = super().process_document(content, is_pdf, system_prompt, user_prompt, max_tokens)
+        data = json.loads(raw)
+        if "response" not in data:
+            raise ValueError(f"opencode JSON missing 'response' key; got: {list(data.keys())}")
+        return data["response"]

@@ -111,6 +111,8 @@ python3 summarise.py api gemini gemini-2.5-pro
 python3 summarise.py api perplexity sonar-pro
 python3 summarise.py api ollama llama3.2
 python3 summarise.py cli opencode
+python3 summarise.py cli opencode ollama/llama3.2
+python3 summarise.py cli opencode lmstudio/mistral --effort high
 ```
 
 Argument rules:
@@ -154,7 +156,7 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `gemini` | `gemini` binary on `PATH` | Ignores `--effort` and uses Gemini defaults |
 | `codex` | `codex` binary on `PATH` | Supports `--effort` via Codex config overrides |
 | `copilot` | `copilot` binary on `PATH` | Supports `--effort low|medium|high` |
-| `opencode` | `opencode` binary on `PATH` | Model configured in `~/.config/opencode/opencode.json`; no CLI model flag |
+| `opencode` | `opencode` binary on `PATH` | `--model provider/model`; supports `--effort low\|medium\|high` via `--variant` |
 
 ### API mode
 
@@ -171,23 +173,14 @@ In `cli` mode you can also pass `--effort low|medium|high`. Effort is currently 
 
 ### Using OpenCode with local LLMs
 
-OpenCode can connect to locally-hosted models through [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/) by adding them as custom providers in its configuration file at `~/.config/opencode/opencode.json`. For example:
+OpenCode connects to locally-hosted models through [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/) once they are configured as providers in OpenCode. Pass the model in `provider/model` format as the third argument:
 
-```json
-{
-  "providers": {
-    "lmstudio": {
-      "name": "LM Studio",
-      "api_key": "lm-studio",
-      "base_url": "http://127.0.0.1:1234/v1"
-    }
-  }
-}
+```bash
+python3 summarise.py cli opencode ollama/llama3.2
+python3 summarise.py cli opencode lmstudio/mistral-7b
 ```
 
-For Ollama the base URL is `http://localhost:11434/v1`. Set the active model inside the OpenCode config or via the `/model` command in an interactive session. Any model reachable through OpenCode's configuration — local or cloud — is available without changing how you invoke `summarise.py`.
-
-> **Note**: OpenCode has been archived upstream; development continues as [Crush](https://github.com/charmbracelet/crush) by the Charm team. The `opencode` binary continues to function, but Crush (`crush`) may be preferred for new installations.
+Any model reachable through OpenCode's provider configuration — local or cloud — is available without any other changes.
 
 ## Failure Behaviour
 
