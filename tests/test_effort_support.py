@@ -3,7 +3,23 @@ from unittest.mock import patch
 
 from providers.cli import ClaudeCLI, CodexCLI, CopilotCLI, GeminiCLI, OpenCodeCLI
 from providers import create_provider
-from summarise import build_provider_config, parse_cli_args, validate_startup_selection
+from summarise import (
+    build_provider_config,
+    fit_prompt_to_provider_budget,
+    normalise_extracted_text,
+    parse_cli_args,
+    validate_startup_selection,
+)
+
+
+class DummyBudgetedProvider:
+    mode = "api"
+    provider_name = "any-provider"
+
+    def __init__(self, max_prompt_chars=None):
+        self.config = {}
+        if max_prompt_chars is not None:
+            self.config["max_prompt_chars"] = max_prompt_chars
 
 
 class ParseCliArgsTests(unittest.TestCase):
@@ -52,6 +68,94 @@ class ParseCliArgsTests(unittest.TestCase):
             config={"model": "gpt-5.4", "effort": "high"},
         )
         self.assertEqual(result, ("cli", "codex", "gpt-5.4", "high", mock_provider))
+
+
+class PromptHardeningTests(unittest.TestCase):
+    def test_normalise_extracted_text_removes_pathological_table_rows(self):
+        wide_table_row = "|" + (" noisy cell |" * 120)
+        text = "\n".join(
+            [
+                "The paper reports a compact quiescent galaxy.",
+                "| Filter | Value |",
+                "| F150W | 1.23 |",
+                wide_table_row,
+                "The discussion remains available for exact quotes.",
+            ]
+        )
+
+        cleaned = normalise_extracted_text(text)
+
+        self.assertIn("| Filter | Value |", cleaned)
+        self.assertIn("| F150W | 1.23 |", cleaned)
+        self.assertNotIn(wide_table_row, cleaned)
+        self.assertIn("The discussion remains available", cleaned)
+
+    def test_normalise_extracted_text_removes_long_non_table_noise_lines(self):
+        noisy_line = "<br>".join(["1.23+0.04"] * 140)
+        text = "\n".join(
+            [
+                "The abstract remains intact.",
+                noisy_line,
+                "The conclusion remains intact.",
+            ]
+        )
+
+        cleaned = normalise_extracted_text(text)
+
+        self.assertIn("The abstract remains intact.", cleaned)
+        self.assertNotIn(noisy_line, cleaned)
+        self.assertIn("The conclusion remains intact.", cleaned)
+
+    def test_fit_prompt_to_provider_budget_drops_references_before_appendix(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=1200)
+        system_prompt = "system"
+        template = "template"
+        paper_text = "\n".join(
+            [
+                "# Paper",
+                "Main science result.",
+                "#### REFERENCES",
+                "Reference noise. " * 200,
+                "# APPENDIX",
+                "Appendix content that should not be reached.",
+            ]
+        )
+
+        with self.assertLogs(level="WARNING"):
+            reduced_text, user_prompt = fit_prompt_to_provider_budget(
+                provider,
+                system_prompt,
+                paper_text,
+                template,
+            )
+
+        self.assertIn("Main science result.", reduced_text)
+        self.assertNotIn("Reference noise.", reduced_text)
+        self.assertNotIn("Appendix content", reduced_text)
+        self.assertIn("Main science result.", user_prompt)
+
+    def test_fit_prompt_to_provider_budget_applies_to_any_provider(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=1200)
+        system_prompt = "system"
+        template = "template"
+        paper_text = "\n".join(
+            [
+                "# Paper",
+                "Main science result.",
+                "#### REFERENCES",
+                "Reference noise. " * 200,
+            ]
+        )
+
+        with self.assertLogs(level="WARNING"):
+            reduced_text, _user_prompt = fit_prompt_to_provider_budget(
+                provider,
+                system_prompt,
+                paper_text,
+                template,
+            )
+
+        self.assertNotIn("Reference noise.", reduced_text)
 
 
 class CliProviderEffortTests(unittest.TestCase):

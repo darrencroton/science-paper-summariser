@@ -198,6 +198,8 @@ Run the focused unit tests with the project virtualenv:
 - Provider unsupported in the selected mode: exits immediately
 - CLI binary missing in `cli` mode: exits immediately
 - API key missing in `api` mode: exits immediately
+- Long noisy Markdown conversion lines from PDF extraction are removed before prompting
+- Extracted-text prompts above the configured safety budget drop references, then appendices
 
 `logs/history.log` records the selected mode, requested provider, provider backend class, and active model so CLI and API runs are easy to distinguish.
 

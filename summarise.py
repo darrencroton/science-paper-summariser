@@ -52,6 +52,8 @@ shutdown_requested = False
 _marker_models = None
 MARKER_TIMEOUT = 300  # seconds before marker-pdf extraction is abandoned
 SOURCE_SCAN_CHAR_LIMIT = 4000
+EXTRACTION_NOISE_LINE_CHAR_LIMIT = 1000
+DEFAULT_PROMPT_CHAR_BUDGET = 300_000
 
 ARXIV_FILENAME_RE = re.compile(
     r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[A-Za-z.-]+/\d{7}(?:v\d+)?)"
@@ -331,6 +333,172 @@ def read_project_knowledge():
         raise
 
 
+def _is_extraction_noise_line(line):
+    """Return True for long marker-pdf conversion lines with little prose value."""
+    if len(line) <= EXTRACTION_NOISE_LINE_CHAR_LIMIT:
+        return False
+
+    stripped = line.strip()
+    if not stripped:
+        return True
+
+    alpha_chars = sum(char.isalpha() for char in stripped)
+    alpha_ratio = alpha_chars / len(stripped)
+    separator_chars = sum(char in "|-_=+·. " for char in stripped)
+    separator_ratio = separator_chars / len(stripped)
+    html_breaks = stripped.count("<br>")
+
+    return (
+        stripped.count("|") >= 2
+        or html_breaks >= 20
+        or separator_ratio > 0.85
+        or alpha_ratio < 0.08
+    )
+
+
+def normalise_extracted_text(text, source_name="document"):
+    """Remove extraction artefacts that can overwhelm LLM context windows.
+
+    Marker-pdf can occasionally convert wide PDF tables or layouts into
+    thousands of characters of row/separator noise. These lines add little
+    useful prose context and can make otherwise normal papers exceed CLI limits.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    kept_lines = []
+    removed_lines = 0
+    removed_chars = 0
+
+    for line in text.splitlines():
+        if _is_extraction_noise_line(line):
+            removed_lines += 1
+            removed_chars += len(line) + 1
+            continue
+        kept_lines.append(line)
+
+    if removed_lines:
+        logging.info(
+            "Removed %d noisy extraction lines from %s (~%d chars).",
+            removed_lines,
+            source_name,
+            removed_chars,
+        )
+        return "\n".join(kept_lines)
+
+    return text
+
+
+def _get_prompt_char_budget(provider):
+    """Return a conservative combined-prompt character budget."""
+    configured_budget = getattr(provider, "config", {}).get("max_prompt_chars")
+    if configured_budget:
+        return int(configured_budget)
+
+    return DEFAULT_PROMPT_CHAR_BUDGET
+
+
+def _combined_prompt_chars(system_prompt, user_prompt):
+    """Return the exact combined prompt length used by CLI providers."""
+    return len(f"{system_prompt}\n\n{user_prompt}")
+
+
+def _drop_references_section(paper_text):
+    """Drop the references section from extracted Markdown text."""
+    lines = paper_text.splitlines()
+    output = []
+
+    for line in lines:
+        stripped = line.strip().strip("*").strip().upper()
+        if stripped in {"REFERENCES", "# REFERENCES", "#### REFERENCES"}:
+            break
+        output.append(line)
+
+    return "\n".join(output)
+
+
+def _drop_appendix_section(paper_text):
+    """Drop the appendix and all following extracted Markdown text."""
+    lines = paper_text.splitlines()
+    output = []
+
+    for line in lines:
+        stripped = line.strip().strip("*").strip().upper()
+        if stripped in {"APPENDIX", "# APPENDIX", "#### APPENDIX"}:
+            break
+        output.append(line)
+
+    return "\n".join(output)
+
+
+def fit_prompt_to_provider_budget(
+    provider,
+    system_prompt,
+    paper_text,
+    template,
+    source_metadata=None,
+    is_pdf=False,
+):
+    """Build a user prompt, removing low-value sections only if needed."""
+    user_prompt = create_user_prompt(
+        paper_text,
+        template,
+        source_metadata=source_metadata,
+        is_pdf=is_pdf,
+    )
+    budget = _get_prompt_char_budget(provider)
+    if not budget:
+        return paper_text, user_prompt
+
+    combined_chars = _combined_prompt_chars(system_prompt, user_prompt)
+    if combined_chars <= budget:
+        return paper_text, user_prompt
+
+    logging.warning(
+        "Combined prompt is %d chars, above %s budget of %d chars. "
+        "Applying fallback prompt reduction.",
+        combined_chars,
+        getattr(provider, "provider_name", provider.__class__.__name__),
+        budget,
+    )
+
+    reductions = (
+        ("references", _drop_references_section),
+        ("appendix", _drop_appendix_section),
+    )
+    reduced_text = paper_text
+    for label, reducer in reductions:
+        candidate_text = reducer(reduced_text)
+        if candidate_text == reduced_text:
+            continue
+
+        candidate_prompt = create_user_prompt(
+            candidate_text,
+            template,
+            source_metadata=source_metadata,
+            is_pdf=is_pdf,
+        )
+        candidate_chars = _combined_prompt_chars(system_prompt, candidate_prompt)
+        logging.info(
+            "Prompt reduction dropped %s: %d -> %d combined chars.",
+            label,
+            combined_chars,
+            candidate_chars,
+        )
+        reduced_text = candidate_text
+        user_prompt = candidate_prompt
+        combined_chars = candidate_chars
+
+        if combined_chars <= budget:
+            return reduced_text, user_prompt
+
+    raise ValueError(
+        f"Combined prompt is {combined_chars} chars after cleanup, above "
+        f"{getattr(provider, 'provider_name', provider.__class__.__name__)} "
+        f"budget of {budget} chars"
+    )
+
+
 def read_input_file(file_path, provider):
     """Read content from an input file (PDF or TXT).
 
@@ -385,13 +553,15 @@ def read_input_file(file_path, provider):
                             f"processing {file_path.name}"
                         )
                 text, _, _ = text_from_rendered(rendered)
+                text = normalise_extracted_text(text, source_name=file_path.name)
                 logging.info(f"Extracted ~{len(text.split())} words from PDF")
                 return text, None
 
         elif file_suffix == ".txt":
             logging.info(f"Reading text file: {file_path.name}")
             with open(file_path, "r", encoding="utf-8") as f:
-                return f.read(), None
+                text = f.read()
+                return normalise_extracted_text(text, source_name=file_path.name), None
         else:
             return None, f"Unsupported file type: {file_path.suffix}"
 
@@ -1076,7 +1246,9 @@ def process_file(file_path, keywords, template, provider):
         else:
             logging.info("No canonical source metadata detected for %s", file_path.name)
 
-        user_prompt = create_user_prompt(
+        paper_text, user_prompt = fit_prompt_to_provider_budget(
+            provider,
+            system_prompt,
             paper_text,
             template,
             source_metadata=source_metadata,
