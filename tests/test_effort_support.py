@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from providers.cli import ClaudeCLI, CodexCLI, CopilotCLI, GeminiCLI, OpenCodeCLI
@@ -8,6 +9,7 @@ from summarise import (
     fit_prompt_to_provider_budget,
     normalise_extracted_text,
     parse_cli_args,
+    process_file,
     validate_startup_selection,
 )
 
@@ -17,9 +19,13 @@ class DummyBudgetedProvider:
     provider_name = "any-provider"
 
     def __init__(self, max_prompt_chars=None):
+        self.model = None
         self.config = {}
         if max_prompt_chars is not None:
             self.config["max_prompt_chars"] = max_prompt_chars
+
+    def supports_direct_pdf(self):
+        return False
 
 
 class ParseCliArgsTests(unittest.TestCase):
@@ -156,6 +162,146 @@ class PromptHardeningTests(unittest.TestCase):
             )
 
         self.assertNotIn("Reference noise.", reduced_text)
+
+    def test_fit_prompt_to_provider_budget_drops_markdown_references_heading(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=1200)
+        system_prompt = "system"
+        template = "template"
+        paper_text = "\n".join(
+            [
+                "# Paper",
+                "Main science result.",
+                "## References",
+                "Reference noise. " * 200,
+            ]
+        )
+
+        with self.assertLogs(level="WARNING"):
+            reduced_text, user_prompt = fit_prompt_to_provider_budget(
+                provider,
+                system_prompt,
+                paper_text,
+                template,
+            )
+
+        self.assertIn("Main science result.", reduced_text)
+        self.assertNotIn("Reference noise.", reduced_text)
+        self.assertIn("Main science result.", user_prompt)
+
+    def test_fit_prompt_to_provider_budget_drops_singular_reference_heading(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=1200)
+        system_prompt = "system"
+        template = "template"
+        paper_text = "\n".join(
+            [
+                "# Paper",
+                "Main science result.",
+                "## Reference",
+                "Reference noise. " * 200,
+            ]
+        )
+
+        with self.assertLogs(level="WARNING"):
+            reduced_text, _user_prompt = fit_prompt_to_provider_budget(
+                provider,
+                system_prompt,
+                paper_text,
+                template,
+            )
+
+        self.assertIn("Main science result.", reduced_text)
+        self.assertNotIn("Reference noise.", reduced_text)
+
+    def test_fit_prompt_to_provider_budget_drops_references_and_notes_heading(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=1200)
+        system_prompt = "system"
+        template = "template"
+        paper_text = "\n".join(
+            [
+                "# Paper",
+                "Main science result.",
+                "### References and Notes",
+                "Reference note noise. " * 200,
+            ]
+        )
+
+        with self.assertLogs(level="WARNING"):
+            reduced_text, _user_prompt = fit_prompt_to_provider_budget(
+                provider,
+                system_prompt,
+                paper_text,
+                template,
+            )
+
+        self.assertIn("Main science result.", reduced_text)
+        self.assertNotIn("Reference note noise.", reduced_text)
+
+    def test_fit_prompt_to_provider_budget_drops_numbered_appendix_heading(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=1200)
+        system_prompt = "system"
+        template = "template"
+        paper_text = "\n".join(
+            [
+                "# Paper",
+                "Main science result.",
+                "# Appendix A: Supporting Material",
+                "Appendix noise. " * 200,
+            ]
+        )
+
+        with self.assertLogs(level="WARNING"):
+            reduced_text, _user_prompt = fit_prompt_to_provider_budget(
+                provider,
+                system_prompt,
+                paper_text,
+                template,
+            )
+
+        self.assertIn("Main science result.", reduced_text)
+        self.assertNotIn("Appendix noise.", reduced_text)
+
+    def test_process_file_sends_reduced_prompt_to_provider(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=3000)
+        paper_text = "\n".join(
+            [
+                "# Paper",
+                "Main science result.",
+                "## References",
+                "Reference noise. " * 200,
+            ]
+        )
+
+        with (
+            patch("summarise.read_input_file", return_value=(paper_text, None)),
+            patch("summarise._write_debug_prompt"),
+            patch(
+                "summarise._call_llm_with_retry",
+                return_value="# Paper\n\nSummary",
+            ) as mock_call,
+            patch("summarise.strip_preamble", side_effect=lambda summary: summary),
+            patch(
+                "summarise.enforce_source_metadata",
+                side_effect=lambda summary, source_metadata: summary,
+            ),
+            patch("summarise.validate_summary"),
+            patch("summarise.extract_metadata", return_value=("Paper", ["Smith"], "2026")),
+            patch("summarise.save_summary", return_value=Path("output/Paper.md")),
+            patch("summarise.move_to_done", return_value=Path("processed/Paper.txt")),
+            self.assertLogs(level="WARNING"),
+        ):
+            success, original_filename, error = process_file(
+                Path("paper.txt"),
+                keywords="keywords",
+                template="template",
+                provider=provider,
+            )
+
+        self.assertTrue(success)
+        self.assertEqual(original_filename, "paper.txt")
+        self.assertIsNone(error)
+        sent_user_prompt = mock_call.call_args.args[4]
+        self.assertIn("Main science result.", sent_user_prompt)
+        self.assertNotIn("Reference noise.", sent_user_prompt)
 
 
 class CliProviderEffortTests(unittest.TestCase):

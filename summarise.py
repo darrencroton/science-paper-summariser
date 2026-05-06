@@ -54,6 +54,22 @@ MARKER_TIMEOUT = 300  # seconds before marker-pdf extraction is abandoned
 SOURCE_SCAN_CHAR_LIMIT = 4000
 EXTRACTION_NOISE_LINE_CHAR_LIMIT = 1000
 DEFAULT_PROMPT_CHAR_BUDGET = 300_000
+REFERENCE_SECTION_TITLES = {
+    "BIBLIOGRAPHY",
+    "LITERATURE CITED",
+    "NOTES AND REFERENCES",
+    "REFERENCE",
+    "REFERENCES",
+    "REFERENCES AND NOTES",
+    "REFERENCES CITED",
+    "WORKS CITED",
+}
+APPENDIX_SECTION_TITLES = {
+    "APPENDICES",
+    "APPENDIX",
+    "SUPPLEMENTARY MATERIAL",
+    "SUPPLEMENTARY MATERIALS",
+}
 
 ARXIV_FILENAME_RE = re.compile(
     r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[A-Za-z.-]+/\d{7}(?:v\d+)?)"
@@ -403,32 +419,55 @@ def _combined_prompt_chars(system_prompt, user_prompt):
     return len(f"{system_prompt}\n\n{user_prompt}")
 
 
-def _drop_references_section(paper_text):
-    """Drop the references section from extracted Markdown text."""
+def _normalise_section_heading(line):
+    """Return a normalised Markdown/plain section heading title."""
+    stripped = line.strip()
+    if not stripped:
+        return ""
+
+    heading_match = re.match(r"^#{1,6}\s+(?P<title>.*?)\s*#*\s*$", stripped)
+    if heading_match:
+        stripped = heading_match.group("title").strip()
+
+    stripped = stripped.strip("*_`")
+    stripped = re.sub(r"\s+", " ", stripped)
+    stripped = re.sub(r"[\s:.;-]+$", "", stripped)
+    return stripped.upper()
+
+
+def _is_matching_section_heading(line, section_titles, section_prefixes=()):
+    """Return True when a line is a heading for a section to drop."""
+    title = _normalise_section_heading(line)
+    if title in section_titles:
+        return True
+    return any(title.startswith(prefix) for prefix in section_prefixes)
+
+
+def _drop_sections_from_heading(paper_text, section_titles, section_prefixes=()):
+    """Drop text from the first matching section heading onwards."""
     lines = paper_text.splitlines()
     output = []
 
     for line in lines:
-        stripped = line.strip().strip("*").strip().upper()
-        if stripped in {"REFERENCES", "# REFERENCES", "#### REFERENCES"}:
+        if _is_matching_section_heading(line, section_titles, section_prefixes):
             break
         output.append(line)
 
     return "\n".join(output)
+
+
+def _drop_references_section(paper_text):
+    """Drop the references section from extracted Markdown text."""
+    return _drop_sections_from_heading(paper_text, REFERENCE_SECTION_TITLES)
 
 
 def _drop_appendix_section(paper_text):
     """Drop the appendix and all following extracted Markdown text."""
-    lines = paper_text.splitlines()
-    output = []
-
-    for line in lines:
-        stripped = line.strip().strip("*").strip().upper()
-        if stripped in {"APPENDIX", "# APPENDIX", "#### APPENDIX"}:
-            break
-        output.append(line)
-
-    return "\n".join(output)
+    return _drop_sections_from_heading(
+        paper_text,
+        APPENDIX_SECTION_TITLES,
+        section_prefixes=("APPENDIX ", "APPENDICES "),
+    )
 
 
 def fit_prompt_to_provider_budget(
