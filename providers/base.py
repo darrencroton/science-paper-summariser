@@ -3,8 +3,6 @@
 Defines the interface that all providers (API and CLI) must implement.
 """
 
-import logging
-
 
 class Provider:
     """Base class for all LLM providers.
