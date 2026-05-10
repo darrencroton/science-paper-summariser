@@ -45,8 +45,8 @@ The focused unit tests cover CLI argument parsing and CLI provider command const
 - **`summarise.py`** — Main orchestration: file monitoring loop, PDF reading (via `marker-pdf`, lazy-loaded), prompt construction, LLM call with retry (3 attempts, exponential backoff), output validation, metadata-based filename generation, file movement. Provider is created once in `main()` and reused. Uses signal handlers for graceful SIGTERM/SIGINT shutdown via a global `shutdown_requested` flag.
 
 - **`providers/`** — Provider package with clean separation of API and CLI providers:
-  - `base.py` — `Provider` base class defining the interface: `setup()`, `process_document()`, `get_max_context_size()`, `supports_direct_pdf()`.
-  - `api.py` — API providers: `ClaudeAPI`, `OpenAIAPI`, `GeminiAPI`, `PerplexityAPI`, `OllamaAPI`. Each uses its SDK directly. Gemini uses `system_instruction` parameter. Perplexity uses the OpenAI-compatible endpoint.
+  - `base.py` — `Provider` base class defining the interface: `setup()`, `process_document()`, `get_max_context_size()`, `supports_direct_pdf()`, `validate_runtime_ready()`, `get_preferred_max_tokens()`.
+  - `api.py` — API providers: `ClaudeAPI`, `OpenAIAPI`, `GeminiAPI`, `PerplexityAPI`, `OllamaAPI`, `OpenAICompatibleAPI`. Each uses its SDK or direct HTTP. Gemini uses `system_instruction`. Perplexity uses the OpenAI SDK pointed at api.perplexity.ai. `OpenAICompatibleAPI` targets any `/v1/chat/completions` server (LM Studio, llama.cpp, vLLM, etc.).
   - `cli.py` — CLI providers: `CLIProvider` base class with `ClaudeCLI`, `CodexCLI`, `GeminiCLI`, `CopilotCLI`, `OpenCodeCLI`. All use subprocess invocation in non-interactive mode.
   - `__init__.py` — `create_provider(mode, provider_name, config)` factory with explicit registries and prerequisite validation.
 
@@ -55,7 +55,7 @@ The focused unit tests cover CLI argument parsing and CLI provider command const
 1. `get_pending_files()` — scans `input/` excluding completed and failed files
 2. `read_input_file()` — reads PDF (binary for direct upload, or marker-pdf text extraction) or text
 3. `create_system_prompt()` + `create_user_prompt()` — builds prompts using `project_knowledge/` files
-4. `_call_llm_with_retry()` — calls the provider with retry and exponential backoff
+4. `_call_llm_with_retry()` — calls the provider with retry and exponential backoff; validates that summaries with `[^N]` footnote markers also contain a `## References` section, retrying if not
 5. `strip_preamble()` — removes any text before the first `# ` heading
 6. `validate_summary()` — checks structure (title, year, authors, bullets/footnotes, glossary, tags)
 7. `save_summary()` — writes to `output/` with metadata-derived filename (`Author - Year - Title.md`)
@@ -76,10 +76,11 @@ python3 summarise.py api claude      → ClaudeAPI
 python3 summarise.py api gemini      → GeminiAPI
 python3 summarise.py api openai      → OpenAIAPI
 python3 summarise.py api perplexity  → PerplexityAPI
-python3 summarise.py api ollama      → OllamaAPI
+python3 summarise.py api ollama               → OllamaAPI
+python3 summarise.py api openai-compatible    → OpenAICompatibleAPI
 ```
 
-If the selected mode/provider combination is invalid, the CLI binary is missing, or the required API key is absent, startup fails immediately.
+If the selected mode/provider combination is invalid, the CLI binary is missing, the required API key is absent, or a local API server is unreachable, startup fails immediately.
 
 ### State Tracking
 
@@ -103,7 +104,9 @@ File-based, no database:
 1. Create a subclass of `Provider` in `providers/api.py`
 2. Set `default_model` and `default_context_size` class attributes
 3. Implement: `setup()`, `process_document()`, `supports_direct_pdf()`
-4. Add the provider name to `_API_PROVIDERS` in `providers/__init__.py`
+4. Override `validate_runtime_ready()` if the provider needs a pre-run connectivity check (local/self-hosted servers)
+5. Override `get_preferred_max_tokens()` if the provider needs a higher output token budget than the 12 288 base default (local/reasoning models should use 32 768 or more)
+6. Add the provider name to `_API_PROVIDERS` in `providers/__init__.py`
 
 ### CLI Provider
 1. Create a subclass of `CLIProvider` in `providers/cli.py`
@@ -118,7 +121,9 @@ API keys are loaded from `.env` via `python-dotenv`. They are only needed when u
 - `OPENAI_API_KEY` (OpenAI API)
 - `GOOGLE_API_KEY` (Gemini API)
 - `PERPLEXITY_API_KEY` (Perplexity API)
-- Ollama requires no key (local at `localhost:11434`)
+- Ollama requires no key or URL config (defaults to `http://localhost:11434`)
+- `openai-compatible` requires `OPENAI_COMPATIBLE_BASE_URL` set in `.env`; see `.env.template` for examples
+- `openai-compatible` with a key-protected server: also set `api_key_env` in provider config to the env var name and define that key in `.env`
 - CLI tools (`claude`, `codex`, `gemini`, `copilot`, `opencode`) require no API keys
 - OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`); effort maps to provider-specific `--variant` values
 

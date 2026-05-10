@@ -63,8 +63,8 @@ mkdir -p input output processed logs
   - OpenCode must already have an authenticated or configured model available, or you must pass a `provider/model` override
 - `api` mode requirements:
   - Add the required credentials to `.env`
-  - Supported API providers: `claude`, `gemini`, `openai`, `perplexity`, `ollama`
-  - Required environment variables:
+  - Supported API providers: `claude`, `gemini`, `openai`, `perplexity`, `ollama`, `openai-compatible`
+  - Required environment variables for cloud providers:
 
 ```bash
 ANTHROPIC_API_KEY=your_key_here
@@ -73,7 +73,7 @@ OPENAI_API_KEY=your_key_here
 PERPLEXITY_API_KEY=your_key_here
 ```
 
-`ollama` does not use an API key, but it does require a reachable local Ollama server, which defaults to `http://localhost:11434`.
+`ollama` and `openai-compatible` are local providers that do not require API keys in `.env`. Both require a reachable local inference server. `openai-compatible` additionally requires the server's `/v1` endpoint — set `OPENAI_COMPATIBLE_BASE_URL` in `.env` (see `.env.template` for examples). Both providers check connectivity at startup and fail immediately with a clear message if the server is unreachable.
 
 4. Make the scripts executable if needed:
 
@@ -114,6 +114,7 @@ python3 summarise.py api openai gpt-5.2
 python3 summarise.py api gemini gemini-2.5-pro
 python3 summarise.py api perplexity sonar-pro
 python3 summarise.py api ollama llama3.2
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 python3 summarise.py api openai-compatible qwen2.5:14b
 ```
 
 Argument rules:
@@ -168,7 +169,8 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `gemini` | `GOOGLE_API_KEY` | Google Gemini API |
 | `openai` | `OPENAI_API_KEY` | OpenAI API |
 | `perplexity` | `PERPLEXITY_API_KEY` | Perplexity API |
-| `ollama` | Local Ollama server | No API key required |
+| `ollama` | Local Ollama server | No API key required; checks connectivity at startup |
+| `openai-compatible` | Local or self-hosted `/v1/chat/completions` server | Requires `OPENAI_COMPATIBLE_BASE_URL` in `.env` (or `base_url` in provider config); `api_key_env` optional; checks connectivity at startup |
 
 Each provider keeps its own default model or model-loading behaviour. Passing a third argument overrides that default. OpenCode uses its own model-loading order: `--model`, configured default model, last used model, then internal priority.
 In `cli` mode you can also pass `--effort low|medium|high`. Effort is currently unsupported in `api` mode.
@@ -198,8 +200,10 @@ Run the focused unit tests with the project virtualenv:
 - Provider unsupported in the selected mode: exits immediately
 - CLI binary missing in `cli` mode: exits immediately
 - API key missing in `api` mode: exits immediately
+- Local API server unreachable (`ollama`, `openai-compatible`): exits immediately with a clear message
 - Long noisy Markdown conversion lines from PDF extraction are removed before prompting
 - Extracted-text prompts above the configured safety budget drop references, then appendices
+- Summaries with footnote markers but no `## References` section trigger an automatic retry
 
 `logs/history.log` records the selected mode, requested provider, provider backend class, and active model so CLI and API runs are easy to distinguish.
 

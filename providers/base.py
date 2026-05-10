@@ -3,8 +3,6 @@
 Defines the interface that all providers (API and CLI) must implement.
 """
 
-import logging
-
 
 class Provider:
     """Base class for all LLM providers.
@@ -15,7 +13,9 @@ class Provider:
         get_max_context_size() — Return the context window size for this provider family.
 
     Optionally override:
-        supports_direct_pdf() — Whether the provider accepts raw PDF bytes (default: False).
+        supports_direct_pdf()    — Whether the provider accepts raw PDF bytes (default: False).
+        validate_runtime_ready() — Pre-run connectivity/model check (default: no-op).
+        get_preferred_max_tokens() — Max output tokens for this provider (default: 12 288).
     """
 
     def __init__(self, config=None):
@@ -49,3 +49,22 @@ class Provider:
     def supports_direct_pdf(self):
         """Return whether this provider can process PDFs directly without text extraction."""
         return False
+
+    def validate_runtime_ready(self):
+        """Assert the provider is reachable and ready before the processing loop starts.
+
+        The default implementation is a no-op. Local/self-hosted providers should
+        override this to verify endpoint connectivity and model availability, raising
+        ValueError with a clear message if the check fails.
+        """
+        pass
+
+    def get_preferred_max_tokens(self):
+        """Return the preferred max output tokens for this provider.
+
+        Reads from config key 'max_output_tokens' when set; otherwise falls back to
+        12 288, which suits frontier API models. Local providers override the default
+        to something more generous (32 768) to accommodate thinking tokens and avoid
+        silent truncation of long summaries.
+        """
+        return int(self.config.get("max_output_tokens", 12288))

@@ -1,10 +1,11 @@
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from providers.cli import ClaudeCLI, CodexCLI, CopilotCLI, GeminiCLI, OpenCodeCLI
 from providers import create_provider
 from summarise import (
+    _call_llm_with_retry,
     build_provider_config,
     fit_prompt_to_provider_budget,
     normalise_extracted_text,
@@ -63,7 +64,7 @@ class ParseCliArgsTests(unittest.TestCase):
 
     @patch("summarise.create_provider")
     def test_validate_startup_selection_passes_effort_to_provider_creation(self, mock_create_provider):
-        mock_provider = object()
+        mock_provider = MagicMock()
         mock_create_provider.return_value = mock_provider
 
         result = validate_startup_selection(["cli", "codex", "gpt-5.4", "--effort", "high"])
@@ -439,6 +440,48 @@ class OpenCodeCLITests(unittest.TestCase):
 
         self.assertEqual(provider.provider_name, "opencode")
         self.assertEqual(provider.mode, "cli")
+
+
+class ReferencesEnforcementTests(unittest.TestCase):
+    """_call_llm_with_retry retries when [^N] markers are present but ## References is absent."""
+
+    # Minimal summary that contains an inline footnote marker but no References section.
+    _BAD = "# Title\n\nAuthors: Smith A.\n\n[^1] key finding\n\n## Glossary\n| Term | Def |\n"
+    # Same summary with the References section appended — should be accepted.
+    _GOOD = _BAD + '\n## References\n\n[^1]: "exact quote" (Section 1, p.1)\n'
+
+    class _StubProvider:
+        def get_preferred_max_tokens(self):
+            return 100
+
+        def process_document(self, **_kwargs):
+            raise NotImplementedError("override per test")
+
+    @patch("summarise.interruptible_sleep", return_value=False)
+    def test_retries_until_references_section_present(self, _mock_sleep):
+        call_count = 0
+
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                nonlocal call_count
+                call_count += 1
+                return ReferencesEnforcementTests._BAD if call_count < 2 else ReferencesEnforcementTests._GOOD
+
+        result = _call_llm_with_retry(Provider(), "", False, "sys", "usr", max_retries=3)
+
+        self.assertEqual(call_count, 2)
+        self.assertIn("## References", result)
+
+    @patch("summarise.interruptible_sleep", return_value=False)
+    def test_raises_after_all_retries_with_missing_references_section(self, _mock_sleep):
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                return ReferencesEnforcementTests._BAD
+
+        with self.assertRaises(ValueError) as ctx:
+            _call_llm_with_retry(Provider(), "", False, "sys", "usr", max_retries=2)
+
+        self.assertIn("## References", str(ctx.exception))
 
 
 if __name__ == "__main__":
