@@ -71,6 +71,9 @@ APPENDIX_SECTION_TITLES = {
     "SUPPLEMENTARY MATERIALS",
 }
 
+_INLINE_FOOTNOTE_RE = re.compile(r"\[\^\d+\]")
+_REFERENCES_HEADING_RE = re.compile(r"^## References\s*$", re.MULTILINE)
+
 ARXIV_FILENAME_RE = re.compile(
     r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[A-Za-z.-]+/\d{7}(?:v\d+)?)"
 )
@@ -220,6 +223,7 @@ def validate_startup_selection(argv):
         provider_name,
         config=build_provider_config(model_override=model_override, effort=effort),
     )
+    provider.validate_runtime_ready()
     return mode, provider_name, model_override, effort, provider
 
 
@@ -796,6 +800,8 @@ def create_system_prompt(keywords):
         "10. Use italics for emphasis and paper names\n"
         "11. If you cannot find an exact supporting quote, do not make the statement\n"
         "12. ALWAYS include a Glossary section with a table of technical terms\n"
+        "13. ALWAYS include a ## References section at the end listing every footnote "
+        "definition as [^N]: \"exact quote\" (Section X.Y, p.Z)\n"
         "</rules>\n\n"
         "<knowledgeBase>\n"
         f"Available astronomy keywords by category:\n{keywords}\n"
@@ -897,22 +903,31 @@ def _call_llm_with_retry(provider, content, is_pdf, system_prompt, user_prompt, 
     Raises the last exception after all retries are exhausted.
     Raises InterruptedError if shutdown is requested.
     """
+    max_tokens = provider.get_preferred_max_tokens()
     last_error = None
     for attempt in range(max_retries):
         if shutdown_requested:
             raise InterruptedError("Shutdown requested before LLM call")
 
         try:
-            logging.info(f"Attempt {attempt + 1}/{max_retries} calling LLM...")
+            logging.info(
+                f"Attempt {attempt + 1}/{max_retries} calling LLM "
+                f"(max_tokens={max_tokens})..."
+            )
             summary = provider.process_document(
                 content=content,
                 is_pdf=is_pdf,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                max_tokens=12288,
+                max_tokens=max_tokens,
             )
             if not summary or not summary.strip():
                 raise ValueError("LLM returned empty or whitespace-only response")
+
+            if _INLINE_FOOTNOTE_RE.search(summary) and not _REFERENCES_HEADING_RE.search(summary):
+                raise ValueError(
+                    "Summary contains footnote markers but is missing the ## References section"
+                )
 
             logging.info(f"LLM call successful (received ~{len(summary)} chars)")
             return summary
@@ -1093,11 +1108,18 @@ def extract_metadata(summary_content):
         if line.startswith("Authors: "):
             author_line = line.replace("Authors: ", "")
             for part in author_line.split(","):
-                name_parts = part.strip().split()
-                if name_parts:
-                    surname = name_parts[0]
-                    if surname and not surname.endswith(".") and len(surname) > 1:
-                        authors_surnames.append(surname)
+                stripped = part.strip()
+                if not stripped:
+                    continue
+                name_parts = stripped.split()
+                if not name_parts:
+                    continue
+                # Handle "Last, First" format: the pre-comma token is a bare surname.
+                # Handle "Last I." format: first word is the surname.
+                # In both cases name_parts[0] is the surname candidate.
+                surname = name_parts[0] or "Unknown"
+                if surname and not surname.endswith(".") and len(surname) > 1:
+                    authors_surnames.append(surname)
         if not year:
             if year_match := re.search(r"\b(19|20)\d{2}\b", line):
                 year = year_match.group()

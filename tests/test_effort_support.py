@@ -1,6 +1,6 @@
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from providers.cli import ClaudeCLI, CodexCLI, CopilotCLI, GeminiCLI, OpenCodeCLI
 from providers import create_provider
@@ -63,7 +63,7 @@ class ParseCliArgsTests(unittest.TestCase):
 
     @patch("summarise.create_provider")
     def test_validate_startup_selection_passes_effort_to_provider_creation(self, mock_create_provider):
-        mock_provider = object()
+        mock_provider = MagicMock()
         mock_create_provider.return_value = mock_provider
 
         result = validate_startup_selection(["cli", "codex", "gpt-5.4", "--effort", "high"])

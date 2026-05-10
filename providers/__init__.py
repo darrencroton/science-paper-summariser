@@ -13,7 +13,7 @@ import logging
 import os
 import shutil
 
-from .api import ClaudeAPI, OpenAIAPI, GeminiAPI, PerplexityAPI, OllamaAPI
+from .api import ClaudeAPI, OpenAIAPI, GeminiAPI, PerplexityAPI, OllamaAPI, OpenAICompatibleAPI
 from .cli import ClaudeCLI, CodexCLI, GeminiCLI, CopilotCLI, OpenCodeCLI
 
 _CLI_PROVIDERS = {
@@ -30,6 +30,7 @@ _API_PROVIDERS = {
     "openai": OpenAIAPI,
     "perplexity": PerplexityAPI,
     "ollama": OllamaAPI,
+    "openai-compatible": OpenAICompatibleAPI,
 }
 
 _API_KEY_ENV_VARS = {
