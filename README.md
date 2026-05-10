@@ -73,7 +73,7 @@ OPENAI_API_KEY=your_key_here
 PERPLEXITY_API_KEY=your_key_here
 ```
 
-`ollama` and `openai-compatible` are local providers that do not require API keys in `.env`. Both require a reachable local inference server. `openai-compatible` additionally requires `base_url` and `model` in provider config.
+`ollama` and `openai-compatible` are local providers that do not require API keys in `.env`. Both require a reachable local inference server. `openai-compatible` additionally requires the server's `/v1` endpoint — set `OPENAI_COMPATIBLE_BASE_URL` in `.env` (see `.env.template` for examples). Both providers check connectivity at startup and fail immediately with a clear message if the server is unreachable.
 
 4. Make the scripts executable if needed:
 
@@ -114,7 +114,7 @@ python3 summarise.py api openai gpt-5.2
 python3 summarise.py api gemini gemini-2.5-pro
 python3 summarise.py api perplexity sonar-pro
 python3 summarise.py api ollama llama3.2
-python3 summarise.py api openai-compatible qwen2.5:14b
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 python3 summarise.py api openai-compatible qwen2.5:14b
 ```
 
 Argument rules:
@@ -170,7 +170,7 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `openai` | `OPENAI_API_KEY` | OpenAI API |
 | `perplexity` | `PERPLEXITY_API_KEY` | Perplexity API |
 | `ollama` | Local Ollama server | No API key required; checks connectivity at startup |
-| `openai-compatible` | Local or self-hosted `/v1/chat/completions` server | Requires `base_url` and `model` in provider config; `api_key_env` optional; checks connectivity at startup |
+| `openai-compatible` | Local or self-hosted `/v1/chat/completions` server | Requires `OPENAI_COMPATIBLE_BASE_URL` in `.env` (or `base_url` in provider config); `api_key_env` optional; checks connectivity at startup |
 
 Each provider keeps its own default model or model-loading behaviour. Passing a third argument overrides that default. OpenCode uses its own model-loading order: `--model`, configured default model, last used model, then internal priority.
 In `cli` mode you can also pass `--effort low|medium|high`. Effort is currently unsupported in `api` mode.

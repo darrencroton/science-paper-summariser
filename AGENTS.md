@@ -121,8 +121,9 @@ API keys are loaded from `.env` via `python-dotenv`. They are only needed when u
 - `OPENAI_API_KEY` (OpenAI API)
 - `GOOGLE_API_KEY` (Gemini API)
 - `PERPLEXITY_API_KEY` (Perplexity API)
-- Ollama and `openai-compatible` require no keys in `.env` (local servers)
-- `openai-compatible` with a key-protected server: set `api_key_env` in provider config to the env var name, then define that var in `.env`
+- Ollama requires no key or URL config (defaults to `http://localhost:11434`)
+- `openai-compatible` requires `OPENAI_COMPATIBLE_BASE_URL` set in `.env`; see `.env.template` for examples
+- `openai-compatible` with a key-protected server: also set `api_key_env` in provider config to the env var name and define that key in `.env`
 - CLI tools (`claude`, `codex`, `gemini`, `copilot`, `opencode`) require no API keys
 - OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`); effort maps to provider-specific `--variant` values
 

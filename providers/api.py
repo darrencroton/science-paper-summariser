@@ -347,10 +347,13 @@ class OpenAICompatibleAPI(Provider):
         """Initialise an OpenAI client pointed at the configured compatible endpoint."""
         import openai
 
-        self.base_url = str(self.config.get("base_url") or "").strip().rstrip("/")
+        self.base_url = str(
+            self.config.get("base_url") or os.getenv("OPENAI_COMPATIBLE_BASE_URL") or ""
+        ).strip().rstrip("/")
         if not self.base_url:
             raise ValueError(
-                "OpenAI-compatible API provider requires 'base_url' in config, "
+                "OpenAI-compatible API provider requires a base URL. "
+                "Set OPENAI_COMPATIBLE_BASE_URL in .env or pass base_url in provider config, "
                 'e.g. "http://127.0.0.1:1234/v1" for LM Studio.'
             )
 

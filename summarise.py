@@ -1114,10 +1114,7 @@ def extract_metadata(summary_content):
                 name_parts = stripped.split()
                 if not name_parts:
                     continue
-                # Handle "Last, First" format: the pre-comma token is a bare surname.
-                # Handle "Last I." format: first word is the surname.
-                # In both cases name_parts[0] is the surname candidate.
-                surname = name_parts[0] or "Unknown"
+                surname = name_parts[0]
                 if surname and not surname.endswith(".") and len(surname) > 1:
                     authors_surnames.append(surname)
         if not year:
