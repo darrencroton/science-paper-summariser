@@ -16,13 +16,17 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 import sys
 import re
 import time
+import json
 import logging
 import signal
 import concurrent.futures
 from dataclasses import dataclass
+from html import unescape
 from dotenv import load_dotenv
 from pathlib import Path
 from typing import Optional
+import xml.etree.ElementTree as ET
+import requests
 from providers import SUPPORTED_MODES, create_provider, get_supported_provider_names
 
 # --- Configuration and Paths ---
@@ -44,6 +48,7 @@ KNOWLEDGE_DIR = SCRIPT_DIR / "project_knowledge"
 PROGRESS_FILE = LOGS_DIR / "completed.log"
 FAILED_FILE = LOGS_DIR / "failed.log"
 PROMPT_DEBUG_FILE = LOGS_DIR / "prompt.txt"
+ARXIV_CATEGORY_CACHE_FILE = LOGS_DIR / "arxiv_categories.json"
 
 # --- Global shutdown flag ---
 shutdown_requested = False
@@ -73,6 +78,7 @@ APPENDIX_SECTION_TITLES = {
 
 _INLINE_FOOTNOTE_RE = re.compile(r"\[\^\d+\]")
 _REFERENCES_HEADING_RE = re.compile(r"^## References\s*$", re.MULTILINE)
+_ARXIV_CATEGORY_RE = re.compile(r"\((?P<code>[A-Za-z0-9.-]+)\)")
 
 ARXIV_FILENAME_RE = re.compile(
     r"(?P<id>\d{4}\.\d{4,5}(?:v\d+)?|[A-Za-z.-]+/\d{7}(?:v\d+)?)"
@@ -90,6 +96,31 @@ DOI_URL_RE = re.compile(
     re.IGNORECASE,
 )
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
+
+ARXIV_METADATA_TIMEOUT = 5
+ARXIV_CATEGORY_KEYWORD_HEADINGS = {
+    "astro-ph.CO": ("COSMOLOGY", "GALAXIES"),
+    "astro-ph.EP": ("PLANETARY SYSTEMS", "STARS"),
+    "astro-ph.GA": ("THE GALAXY", "GALAXIES", "INTERSTELLAR MEDIUM (ISM)", "STARS"),
+    "astro-ph.HE": (
+        "PHYSICAL DATA AND PROCESSES",
+        "STARS",
+        "TRANSIENTS",
+        "RESOLVED AND UNRESOLVED SOURCES AS A FUNCTION OF WAVELENGTH",
+    ),
+    "astro-ph.IM": (
+        "ASTRONOMICAL INSTRUMENTATION, METHODS AND TECHNIQUES",
+        "ASTRONOMICAL DATABASES",
+        "RESOLVED AND UNRESOLVED SOURCES AS A FUNCTION OF WAVELENGTH",
+    ),
+    "astro-ph.SR": ("THE SUN", "STARS", "PHYSICAL DATA AND PROCESSES"),
+}
+DEFAULT_KEYWORD_HEADINGS = (
+    "GENERAL",
+    "PHYSICAL DATA AND PROCESSES",
+    "ASTRONOMICAL INSTRUMENTATION, METHODS AND TECHNIQUES",
+    "ASTRONOMICAL DATABASES",
+)
 
 MONTH_NAMES = {
     1: "January",
@@ -116,6 +147,8 @@ class SourceMetadata:
     canonical_url: Optional[str] = None
     published_label: Optional[str] = None
     detection_method: Optional[str] = None
+    primary_category: Optional[str] = None
+    categories: tuple[str, ...] = ()
 
 
 def format_usage():
@@ -351,6 +384,84 @@ def read_project_knowledge():
     except Exception as e:
         logging.critical(f"CRITICAL: Failed to read project knowledge files: {e}")
         raise
+
+
+def parse_keyword_sections(keywords):
+    """Parse the grouped keyword file into heading -> lines."""
+    sections = {}
+    current_heading = None
+    current_lines = []
+
+    for raw_line in keywords.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if not line.startswith("#"):
+            if current_heading is not None:
+                sections[current_heading] = current_lines
+            current_heading = line.upper()
+            current_lines = []
+            continue
+
+        if current_heading is None:
+            current_heading = "GENERAL"
+        current_lines.append(line)
+
+    if current_heading is not None:
+        sections[current_heading] = current_lines
+
+    return sections
+
+
+def _render_keyword_sections(sections, headings):
+    """Render selected keyword sections in source-file format."""
+    rendered_sections = []
+    for heading in headings:
+        lines = sections.get(heading)
+        if not lines:
+            continue
+        rendered_sections.append("\n".join([heading, *lines]))
+    return "\n\n".join(rendered_sections)
+
+
+def extract_keyword_tags(keywords):
+    """Return the allowed hashtag tokens from a grouped keyword list."""
+    return {
+        match.group(0)
+        for match in re.finditer(r"#[A-Za-z0-9][A-Za-z0-9]*", keywords or "")
+    }
+
+
+def _normalise_tag_trace_text(value):
+    """Normalise text for checking that a generated tag appears in a summary."""
+    return re.sub(r"[^A-Za-z0-9]+", "", value or "").lower()
+
+
+def filter_keywords_for_categories(keywords, categories):
+    """Return keywords relevant to arXiv categories, falling back when unknown."""
+    category_list = tuple(category for category in categories if category)
+    if not category_list:
+        return keywords
+
+    selected_headings = []
+    seen_headings = set()
+    for category in category_list:
+        for heading in ARXIV_CATEGORY_KEYWORD_HEADINGS.get(category, ()):
+            if heading not in seen_headings:
+                seen_headings.add(heading)
+                selected_headings.append(heading)
+
+    if not selected_headings:
+        return keywords
+
+    for heading in DEFAULT_KEYWORD_HEADINGS:
+        if heading not in seen_headings:
+            selected_headings.append(heading)
+            seen_headings.add(heading)
+
+    filtered = _render_keyword_sections(parse_keyword_sections(keywords), selected_headings)
+    return filtered or keywords
 
 
 def _is_extraction_noise_line(line):
@@ -680,24 +791,198 @@ def _canonical_arxiv_url(arxiv_id):
     return f"https://arxiv.org/abs/{versionless_id}"
 
 
+def _versionless_arxiv_id(arxiv_id):
+    """Return an arXiv identifier without a version suffix."""
+    return re.sub(r"v\d+$", "", arxiv_id or "", flags=re.IGNORECASE)
+
+
+def _strip_html_tags(value):
+    """Return HTML text content with tags removed."""
+    return unescape(re.sub(r"<[^>]+>", " ", value))
+
+
+def _extract_category_codes(value):
+    """Extract unique category codes from arXiv subject text."""
+    codes = []
+    seen_codes = set()
+    for match in _ARXIV_CATEGORY_RE.finditer(value or ""):
+        code = match.group("code")
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        codes.append(code)
+    return tuple(codes)
+
+
+def extract_arxiv_categories_from_html(html):
+    """Extract primary and full arXiv category codes from an abstract page."""
+    subjects_match = re.search(
+        r'<td[^>]*class=["\'][^"\']*\bsubjects\b[^"\']*["\'][^>]*>(?P<body>.*?)</td>',
+        html or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    subjects_html = subjects_match.group("body") if subjects_match else (html or "")
+
+    primary_match = re.search(
+        r'<span[^>]*class=["\'][^"\']*\bprimary-subject\b[^"\']*["\'][^>]*>'
+        r"(?P<body>.*?)</span>",
+        subjects_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    primary_codes = _extract_category_codes(
+        _strip_html_tags(primary_match.group("body")) if primary_match else ""
+    )
+    categories = _extract_category_codes(_strip_html_tags(subjects_html))
+    primary_category = (
+        primary_codes[0] if primary_codes else (categories[0] if categories else None)
+    )
+    if primary_category and not categories:
+        categories = (primary_category,)
+    return primary_category, categories
+
+
+def extract_arxiv_categories_from_api_xml(xml_text):
+    """Extract primary and full arXiv category codes from arXiv API XML."""
+    try:
+        root = ET.fromstring(xml_text or "")
+    except ET.ParseError:
+        return None, ()
+
+    namespaces = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "arxiv": "http://arxiv.org/schemas/atom",
+    }
+    entry = root.find("atom:entry", namespaces)
+    search_root = entry if entry is not None else root
+
+    primary_node = search_root.find("arxiv:primary_category", namespaces)
+    primary_category = (
+        primary_node.attrib.get("term") if primary_node is not None else None
+    )
+
+    categories = []
+    seen_categories = set()
+    for category_node in search_root.findall("atom:category", namespaces):
+        category = category_node.attrib.get("term")
+        if category and category not in seen_categories:
+            seen_categories.add(category)
+            categories.append(category)
+
+    if primary_category and primary_category not in seen_categories:
+        categories.insert(0, primary_category)
+    if not primary_category and categories:
+        primary_category = categories[0]
+
+    return primary_category, tuple(categories)
+
+
+def _load_arxiv_category_cache():
+    """Read cached arXiv category metadata."""
+    try:
+        if not ARXIV_CATEGORY_CACHE_FILE.exists():
+            return {}
+        with open(ARXIV_CATEGORY_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as error:
+        logging.warning("Could not read arXiv category cache: %s", error)
+        return {}
+
+
+def _save_arxiv_category_cache(cache):
+    """Persist cached arXiv category metadata without interrupting processing."""
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(ARXIV_CATEGORY_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2, sort_keys=True)
+    except Exception as error:
+        logging.warning("Could not write arXiv category cache: %s", error)
+
+
+def _get_cached_arxiv_categories(arxiv_id):
+    """Return cached category metadata for an arXiv identifier if present."""
+    cached = _load_arxiv_category_cache().get(_versionless_arxiv_id(arxiv_id))
+    if not isinstance(cached, dict):
+        return None
+
+    categories = cached.get("categories")
+    if not isinstance(categories, list):
+        return None
+
+    primary_category = cached.get("primary_category")
+    return primary_category, tuple(category for category in categories if category)
+
+
+def _cache_arxiv_categories(arxiv_id, primary_category, categories):
+    """Store successful arXiv category metadata for future offline runs."""
+    category_tuple = tuple(category for category in categories if category)
+    if not category_tuple:
+        return
+
+    versionless_id = _versionless_arxiv_id(arxiv_id)
+    cache = _load_arxiv_category_cache()
+    cache[versionless_id] = {
+        "primary_category": primary_category,
+        "categories": list(category_tuple),
+    }
+    _save_arxiv_category_cache(cache)
+
+
+def fetch_arxiv_categories(arxiv_id):
+    """Fetch arXiv category metadata for an identifier, using a local cache first."""
+    versionless_id = _versionless_arxiv_id(arxiv_id)
+    if not versionless_id:
+        return None, ()
+
+    cached = _get_cached_arxiv_categories(versionless_id)
+    if cached is not None:
+        return cached
+
+    try:
+        response = requests.get(
+            "https://export.arxiv.org/api/query",
+            params={"id_list": versionless_id},
+            headers={"User-Agent": "science-paper-summariser/0.1"},
+            timeout=ARXIV_METADATA_TIMEOUT,
+        )
+        response.raise_for_status()
+    except requests.RequestException as error:
+        logging.warning(
+            "Could not fetch arXiv category metadata for %s: %s",
+            arxiv_id,
+            error,
+        )
+        return None, ()
+
+    primary_category, categories = extract_arxiv_categories_from_api_xml(response.text)
+    _cache_arxiv_categories(versionless_id, primary_category, categories)
+    return primary_category, categories
+
+
 def extract_source_metadata(input_path, paper_text):
     """Detect canonical paper identifiers that can enforce the Published line."""
     if arxiv_id := _extract_arxiv_id_from_filename(input_path):
+        primary_category, categories = fetch_arxiv_categories(arxiv_id)
         return SourceMetadata(
             source_type="arxiv",
             identifier=arxiv_id,
             canonical_url=_canonical_arxiv_url(arxiv_id),
             published_label=_published_label_from_arxiv_id(arxiv_id),
             detection_method="filename",
+            primary_category=primary_category,
+            categories=categories,
         )
 
     if arxiv_id := _extract_arxiv_id_from_text(paper_text):
+        primary_category, categories = fetch_arxiv_categories(arxiv_id)
         return SourceMetadata(
             source_type="arxiv",
             identifier=arxiv_id,
             canonical_url=_canonical_arxiv_url(arxiv_id),
             published_label=_published_label_from_arxiv_id(arxiv_id),
             detection_method="paper_text",
+            primary_category=primary_category,
+            categories=categories,
         )
 
     if doi := _extract_doi_from_text(paper_text):
@@ -779,12 +1064,12 @@ def enforce_source_metadata(summary_content, source_metadata):
 
 # --- Prompt construction ---
 
-def create_system_prompt(keywords):
-    """Construct the system prompt defining the LLM's role, rules, and knowledge base."""
+def create_system_prompt():
+    """Construct the system prompt defining the main summary task."""
     return (
         "<role>\n"
         "You are an esteemed professor of astrophysics at Harvard University "
-        "specializing in analyzing research papers. Your are an expert in \n"
+        "specializing in analyzing research papers. You are an expert in \n"
         "identifying key scientific results and their significance.\n"
         "</role>\n\n"
         "<rules>\n"
@@ -799,13 +1084,9 @@ def create_system_prompt(keywords):
         "9. Use bold for key terms on first mention\n"
         "10. Use italics for emphasis and paper names\n"
         "11. If you cannot find an exact supporting quote, do not make the statement\n"
-        "12. ALWAYS include a Glossary section with a table of technical terms\n"
-        "13. ALWAYS include a ## References section at the end listing every footnote "
+        "12. ALWAYS include a ## References section at the end listing every footnote "
         "definition as [^N]: \"exact quote\" (Section X.Y, p.Z)\n"
-        "</rules>\n\n"
-        "<knowledgeBase>\n"
-        f"Available astronomy keywords by category:\n{keywords}\n"
-        "</knowledgeBase>"
+        "</rules>"
     )
 
 
@@ -832,11 +1113,6 @@ def create_user_prompt(paper_text, template, source_metadata=None, is_pdf=False)
         "<template>\n"
         f"Use this exact structure:\n{template}\n"
         "</template>\n\n"
-        "<tags>\n"
-        "The Tags section must have two parts:\n"
-        "1. First line: Hashtags for telescopes, surveys, datasets, models (proper nouns only)\n"
-        "2. Second line: Science area hashtags (use ONLY provided keywords, only the best ones)\n"
-        "</tags>\n"
         "</task>\n\n"
     )
 
@@ -896,7 +1172,15 @@ def _is_retryable_llm_error(error):
     return not any(marker in message for marker in non_retryable_markers)
 
 
-def _call_llm_with_retry(provider, content, is_pdf, system_prompt, user_prompt, max_retries=3):
+def _call_llm_with_retry(
+    provider,
+    content,
+    is_pdf,
+    system_prompt,
+    user_prompt,
+    max_retries=3,
+    response_validator=None,
+):
     """Call the LLM with retry logic and exponential backoff.
 
     Returns the summary text on success.
@@ -929,6 +1213,9 @@ def _call_llm_with_retry(provider, content, is_pdf, system_prompt, user_prompt, 
                     "Summary contains footnote markers but is missing the ## References section"
                 )
 
+            if response_validator is not None:
+                response_validator(summary)
+
             logging.info(f"LLM call successful (received ~{len(summary)} chars)")
             return summary
 
@@ -958,6 +1245,204 @@ def _call_llm_with_retry(provider, content, is_pdf, system_prompt, user_prompt, 
 
 # --- Post-processing ---
 
+def _normalise_generated_section(markdown, expected_heading):
+    """Return a generated section starting at its expected heading."""
+    lines = [line.rstrip() for line in markdown.strip().splitlines()]
+    for index, line in enumerate(lines):
+        if line.strip() == expected_heading:
+            return "\n".join(lines[index:]).strip()
+    raise ValueError(f"Generated section is missing '{expected_heading}' heading")
+
+
+def _non_empty_section_lines(section_markdown, heading):
+    """Return non-empty lines after a generated section heading."""
+    lines = [line.strip() for line in section_markdown.splitlines()]
+    if not lines or lines[0] != heading:
+        raise ValueError(f"Generated section must start with '{heading}'")
+    return [line for line in lines[1:] if line]
+
+
+def _split_markdown_table_row(line):
+    """Return markdown table cells for a pipe-delimited row, or None."""
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+def _is_markdown_separator_row(cells):
+    """Return True when table cells form a markdown separator row."""
+    if cells is None:
+        return False
+    return all(re.match(r"^:?-{3,}:?$", cell) for cell in cells)
+
+
+def validate_glossary_section(section_markdown):
+    """Validate generated glossary markdown."""
+    section = _normalise_generated_section(section_markdown, "## Glossary")
+    content_lines = _non_empty_section_lines(section, "## Glossary")
+    if len(content_lines) < 3:
+        raise ValueError("Glossary section must contain a markdown table with rows")
+
+    header_cells = _split_markdown_table_row(content_lines[0])
+    separator_cells = _split_markdown_table_row(content_lines[1])
+    if header_cells != ["Term", "Definition"]:
+        raise ValueError("Glossary table must use columns 'Term' and 'Definition'")
+    if len(separator_cells or []) != 2 or not _is_markdown_separator_row(separator_cells):
+        raise ValueError("Glossary table is missing a markdown separator row")
+
+    term_rows = content_lines[2:]
+    for line in term_rows:
+        cells = _split_markdown_table_row(line)
+        if cells is None or len(cells) != 2:
+            raise ValueError("Glossary section must contain only a two-column table")
+        if not cells[0] or not cells[1]:
+            raise ValueError("Glossary table rows must include a term and definition")
+    if not term_rows:
+        raise ValueError("Glossary table must contain at least one term row")
+
+
+def validate_tags_section(section_markdown, available_keywords=None, summary_text=None):
+    """Validate generated tag markdown."""
+    section = _normalise_generated_section(section_markdown, "## Tags")
+    tag_lines = _non_empty_section_lines(section, "## Tags")
+    if len(tag_lines) != 2:
+        raise ValueError("Tags section must contain exactly two hashtag lines")
+    parsed_lines = []
+    for line in tag_lines:
+        tags = line.split()
+        if not tags or not all(
+            re.match(r"^#[A-Za-z0-9][A-Za-z0-9]*$", tag) for tag in tags
+        ):
+            raise ValueError("Each Tags section line must contain only hashtags")
+        if len(tags) > 5:
+            raise ValueError("Each Tags section line must contain no more than 5 tags")
+        parsed_lines.append(tags)
+
+    if available_keywords is not None:
+        allowed_science_tags = extract_keyword_tags(available_keywords)
+        unknown_tags = [
+            tag for tag in parsed_lines[1] if tag not in allowed_science_tags
+        ]
+        if unknown_tags:
+            raise ValueError(
+                "Science-area tags must come from the supplied keyword list: "
+                + ", ".join(unknown_tags)
+            )
+
+    if summary_text is not None:
+        normalised_summary = _normalise_tag_trace_text(summary_text)
+        unsupported_tags = [
+            tag for tag in parsed_lines[0]
+            if _normalise_tag_trace_text(tag.lstrip("#")) not in normalised_summary
+        ]
+        if unsupported_tags:
+            raise ValueError(
+                "Proper-noun tags must appear in the supplied summary: "
+                + ", ".join(unsupported_tags)
+            )
+
+
+def build_glossary_prompt(summary_text):
+    """Build the focused glossary-generation prompt."""
+    system_prompt = (
+        "You are an astrophysics editor. Return only the requested Markdown section. "
+        "Use UK English and define only technical terms that appear in the summary."
+    )
+    user_prompt = (
+        "Create a concise glossary for this completed paper summary.\n\n"
+        "Return exactly this Markdown shape:\n"
+        "## Glossary\n\n"
+        "| Term | Definition |\n"
+        "|---|---|\n"
+        "| **technical term** | One clear sentence explaining the term in context. |\n\n"
+        "Do not include introductory text, commentary, or any other section.\n\n"
+        "---BEGIN SUMMARY---\n"
+        f"{summary_text}\n"
+        "---END SUMMARY---"
+    )
+    return system_prompt, user_prompt
+
+
+def build_tags_prompt(summary_text, keywords):
+    """Build the focused tag-generation prompt."""
+    system_prompt = (
+        "You are an astronomy indexing assistant. Return only the requested Markdown "
+        "section and select tags from the supplied summary and keyword list."
+    )
+    user_prompt = (
+        "Create the tag block for this completed paper summary.\n\n"
+        "Return exactly this Markdown shape:\n"
+        "## Tags\n\n"
+        "#ProperNoun1 #ProperNoun2 #ProperNoun3\n\n"
+        "#ScienceKeyword1 #ScienceKeyword2 #ScienceKeyword3\n\n"
+        "Rules:\n"
+        "- First hashtag line: telescopes, surveys, datasets, missions, instruments, "
+        "models, software, or named catalogues from the summary only; no more than 5.\n"
+        "- Second hashtag line: choose no more than 5 science-area hashtags from the "
+        "available keyword list only.\n"
+        "- If fewer than 5 tags are justified, use fewer.\n"
+        "- Do not include introductory text, commentary, or any other section.\n\n"
+        "Available science-area keywords:\n"
+        f"{keywords}\n\n"
+        "---BEGIN SUMMARY---\n"
+        f"{summary_text}\n"
+        "---END SUMMARY---"
+    )
+    return system_prompt, user_prompt
+
+
+def generate_glossary(summary_text, provider):
+    """Generate and validate a glossary section from the completed summary."""
+    system_prompt, user_prompt = build_glossary_prompt(summary_text)
+    section = _call_llm_with_retry(
+        provider,
+        summary_text,
+        False,
+        system_prompt,
+        user_prompt,
+        response_validator=validate_glossary_section,
+    )
+    return _normalise_generated_section(section, "## Glossary")
+
+
+def generate_tags(summary_text, keywords, provider):
+    """Generate and validate a tags section from the completed summary."""
+    system_prompt, user_prompt = build_tags_prompt(summary_text, keywords)
+    section = _call_llm_with_retry(
+        provider,
+        summary_text,
+        False,
+        system_prompt,
+        user_prompt,
+        response_validator=lambda response: validate_tags_section(
+            response,
+            available_keywords=keywords,
+            summary_text=summary_text,
+        ),
+    )
+    return _normalise_generated_section(section, "## Tags")
+
+
+def insert_section(summary, section_markdown, before_heading="## References"):
+    """Insert a generated markdown section before another heading, or append it."""
+    summary_lines = summary.rstrip().splitlines()
+    section = section_markdown.strip()
+
+    insert_index = None
+    for index, line in enumerate(summary_lines):
+        if line.strip() == before_heading:
+            insert_index = index
+            break
+
+    if insert_index is None:
+        return f"{summary.rstrip()}\n\n{section}\n"
+
+    before = "\n".join(summary_lines[:insert_index]).rstrip()
+    after = "\n".join(summary_lines[insert_index:]).lstrip()
+    return f"{before}\n\n{section}\n\n{after}\n"
+
+
 def strip_preamble(summary_content):
     """Remove any text before the first Markdown heading ('# ')."""
     lines = summary_content.split("\n")
@@ -981,7 +1466,7 @@ def strip_preamble(summary_content):
         return summary_content
 
 
-def validate_summary(summary_content, source_metadata=None):
+def validate_summary(summary_content, source_metadata=None, require_generated_sections=True):
     """Validate the generated summary structure and log results.
 
     This is a safety-net check — it logs warnings but does not reject summaries.
@@ -1050,8 +1535,9 @@ def validate_summary(summary_content, source_metadata=None):
     logging.info(
         f"  All footnotes quoted: {all_quoted} ({properly_quoted}/{footnote_count})"
     )
-    logging.info(f"  Has Glossary: {has_glossary}")
-    logging.info(f"  Has Tags (two lines): {has_tags} ({has_two_tag_lines})")
+    if require_generated_sections:
+        logging.info(f"  Has Glossary: {has_glossary}")
+        logging.info(f"  Has Tags (two lines): {has_tags} ({has_two_tag_lines})")
 
     # Specific warnings
     if not start_with_title:
@@ -1084,11 +1570,11 @@ def validate_summary(summary_content, source_metadata=None):
             f"VALIDATION WARNING: Not all footnotes properly quoted "
             f"({properly_quoted}/{footnote_count})"
         )
-    if not has_glossary:
+    if require_generated_sections and not has_glossary:
         logging.warning("VALIDATION WARNING: Missing '## Glossary' section")
-    if not has_tags:
+    if require_generated_sections and not has_tags:
         logging.warning("VALIDATION WARNING: Missing '## Tags' section")
-    elif not has_two_tag_lines:
+    elif require_generated_sections and not has_two_tag_lines:
         logging.warning("VALIDATION WARNING: '## Tags' section missing two hashtag lines")
 
 
@@ -1282,8 +1768,6 @@ def process_file(file_path, keywords, template, provider):
         logging.info(f"Content type: {type(content).__name__}")
 
         # 2. Build prompts
-        system_prompt = create_system_prompt(keywords)
-
         if is_pdf and provider.supports_direct_pdf():
             paper_text = ""  # PDF binary sent directly to provider
         elif isinstance(content, bytes):
@@ -1303,6 +1787,24 @@ def process_file(file_path, keywords, template, provider):
             )
         else:
             logging.info("No canonical source metadata detected for %s", file_path.name)
+
+        if source_metadata.categories:
+            logging.info(
+                "Detected arXiv categories: primary=%s, all=%s",
+                source_metadata.primary_category or "n/a",
+                ", ".join(source_metadata.categories),
+            )
+        filtered_keywords = filter_keywords_for_categories(
+            keywords,
+            source_metadata.categories,
+        )
+        logging.info(
+            "Tag keyword list: %d -> %d chars.",
+            len(keywords),
+            len(filtered_keywords),
+        )
+
+        system_prompt = create_system_prompt()
 
         paper_text, user_prompt = fit_prompt_to_provider_budget(
             provider,
@@ -1329,6 +1831,17 @@ def process_file(file_path, keywords, template, provider):
         # 4. Post-process
         summary = strip_preamble(summary)
         summary = enforce_source_metadata(summary, source_metadata)
+        validate_summary(
+            summary,
+            source_metadata=source_metadata,
+            require_generated_sections=False,
+        )
+
+        glossary_section = generate_glossary(summary, provider)
+        summary = insert_section(summary, glossary_section)
+
+        tags_section = generate_tags(summary, filtered_keywords, provider)
+        summary = insert_section(summary, tags_section)
         validate_summary(summary, source_metadata=source_metadata)
 
         # 5. Extract metadata once, use for both save and move

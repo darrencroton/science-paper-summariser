@@ -204,6 +204,9 @@ Run the focused unit tests with the project virtualenv:
 - Long noisy Markdown conversion lines from PDF extraction are removed before prompting
 - Extracted-text prompts above the configured safety budget drop references, then appendices
 - Summaries with footnote markers but no `## References` section trigger an automatic retry
+- Glossary and tags are generated in focused post-processing calls after the main summary
+- arXiv category metadata filters the science keyword list used for tag generation
+- arXiv category lookups use the arXiv API and cache successful results in `logs/arxiv_categories.json`
 
 `logs/history.log` records the selected mode, requested provider, provider backend class, and active model so CLI and API runs are easy to distinguish.
 

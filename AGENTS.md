@@ -55,11 +55,13 @@ The focused unit tests cover CLI argument parsing and CLI provider command const
 3. `create_system_prompt()` + `create_user_prompt()` — builds prompts using `project_knowledge/` files
 4. `_call_llm_with_retry()` — calls the provider with retry and exponential backoff; validates that summaries with `[^N]` footnote markers also contain a `## References` section, retrying if not
 5. `strip_preamble()` — removes any text before the first `# ` heading
-6. `validate_summary()` — checks structure (title, year, authors, bullets/footnotes, glossary, tags)
-7. `save_summary()` — writes to `output/` with metadata-derived filename (`Author - Year - Title.md`)
-8. `move_to_done()` — moves original to `processed/` with conflict-safe renaming
+6. `generate_glossary()` — makes a focused summary-only post-processing call and inserts `## Glossary` before `## References`
+7. `generate_tags()` — makes a focused summary-only post-processing call using arXiv-filtered science keywords and inserts `## Tags` before `## References`
+8. `validate_summary()` — checks structure (title, year, authors, bullets/footnotes, glossary, tags)
+9. `save_summary()` — writes to `output/` with metadata-derived filename (`Author - Year - Title.md`)
+10. `move_to_done()` — moves original to `processed/` with conflict-safe renaming
 
-Metadata is extracted once per file and passed to both `save_summary()` and `move_to_done()`.
+Source metadata is detected once per file before prompting. Filename metadata is extracted once from the final summary and used for both `save_summary()` and `move_to_done()`.
 
 ### Provider Routing
 
@@ -93,7 +95,7 @@ File-based, no database:
 - All summaries use **UK English** and **LaTeX** for equations
 - Every bullet point must have a footnote with an **exact quote** from the paper (never paraphrased)
 - The summary template in `project_knowledge/paper-summary-template.md` defines the exact structure — changes here affect all future summaries
-- Tags must use keywords from `project_knowledge/astronomy-keywords.txt` (CamelCase)
+- Tags must use CamelCase keywords from `project_knowledge/astronomy-keywords.txt`; arXiv category metadata filters the keyword list when available
 - Author lists must be complete — never truncated with "et al." in the summary body (though filenames use "et al." for 3+ authors)
 
 ## Adding a New LLM Provider

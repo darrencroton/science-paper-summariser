@@ -42,16 +42,6 @@ Published: Month Year ([Link](<URL to paper>) <- ONLY if you see the arxiv or do
 
 - No more than 3 bullets, each with a footnote
 
-## Glossary 
-
-A table here, 2 columns titled Term and Definition
-
-## Tags
-
-#Hashtag1 #hashtag2 … (no more than 5)
-
-#Hashtag3 #hashtag3 … (no more than 5)
-
 ## References
 
 [^1]: "quote from paper" (Abstract, p.1)
