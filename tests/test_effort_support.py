@@ -10,13 +10,16 @@ from summarise import (
     extract_arxiv_categories_from_api_xml,
     extract_arxiv_categories_from_html,
     filter_keywords_for_categories,
+    build_fallback_tags,
     generate_tags,
     fit_prompt_to_provider_budget,
     insert_section,
     normalise_extracted_text,
+    normalise_tags_section,
     parse_cli_args,
     process_file,
     SourceMetadata,
+    GLOSSARY_MAX_TERMS,
     validate_glossary_section,
     validate_startup_selection,
     validate_tags_section,
@@ -403,74 +406,124 @@ class LocalModelOptimisationTests(unittest.TestCase):
                 "| **Redshift** | Meaning | Extra |"
             )
 
-    def test_validate_tags_section_requires_two_hashtag_lines(self):
+    def test_validate_glossary_section_rejects_too_many_terms(self):
+        rows = "\n".join(
+            f"| **Term {index}** | Definition. |"
+            for index in range(GLOSSARY_MAX_TERMS + 1)
+        )
+
+        with self.assertRaisesRegex(ValueError, "no more than"):
+            validate_glossary_section(
+                "## Glossary\n\n"
+                "| Term | Definition |\n"
+                "|---|---|\n"
+                f"{rows}"
+            )
+
+    def test_validate_tags_section_accepts_one_or_two_hashtag_lines(self):
         validate_tags_section(
             "## Tags\n\n#JWST #CEERS\n\n#GalaxiesHighRedshift #CosmologyObservations",
             self._KEYWORDS,
         )
 
-        with self.assertRaisesRegex(ValueError, "exactly two"):
-            validate_tags_section("## Tags\n\n#JWST")
+        validate_tags_section("## Tags\n\n#JWST")
 
-    def test_validate_tags_section_rejects_too_many_tags(self):
-        with self.assertRaisesRegex(ValueError, "no more than 5"):
-            validate_tags_section(
+    def test_normalise_tags_section_accepts_labeled_comma_separated_lines(self):
+        self.assertEqual(
+            normalise_tags_section(
+                "## Tags\n\n"
+                "Proper nouns: #JWST, #CEERS\n\n"
+                "- Science keywords: #GalaxiesHighRedshift, #CosmologyObservations",
+                self._KEYWORDS,
+            ),
+            "## Tags\n\n#JWST #CEERS\n\n"
+            "#GalaxiesHighRedshift #CosmologyObservations",
+        )
+
+    def test_normalise_tags_section_routes_keyword_tags_from_first_line_to_science_line(self):
+        self.assertEqual(
+            normalise_tags_section(
+                "## Tags\n\n#Surveys #JWST\n\n#GalaxiesHighRedshift",
+                self._KEYWORDS,
+            ),
+            "## Tags\n\n#JWST\n\n#Surveys #GalaxiesHighRedshift",
+        )
+
+    def test_normalise_tags_section_drops_unknown_science_line_tags(self):
+        self.assertEqual(
+            normalise_tags_section(
+                "## Tags\n\n#JWST\n\n#MadeUpScienceTag #GalaxiesHighRedshift",
+                self._KEYWORDS,
+            ),
+            "## Tags\n\n#JWST\n\n#GalaxiesHighRedshift",
+        )
+
+    def test_generate_tags_returns_normalised_section(self):
+        class Provider:
+            def get_preferred_max_tokens(self):
+                return 100
+
+            def process_document(self, **_kwargs):
+                return (
+                    "## Tags\n\n"
+                    "Proper nouns: #JWST, #CEERS\n\n"
+                    "Science keywords: #GalaxiesHighRedshift, #CosmologyObservations"
+                )
+
+        result = generate_tags(
+            "# Summary\n\nJWST and CEERS measured high-redshift galaxies.",
+            self._KEYWORDS,
+            Provider(),
+        )
+
+        self.assertEqual(
+            result,
+            "## Tags\n\n#JWST #CEERS\n\n"
+            "#GalaxiesHighRedshift #CosmologyObservations",
+        )
+
+    def test_normalise_tags_section_truncates_too_many_tags(self):
+        self.assertEqual(
+            normalise_tags_section(
                 "## Tags\n\n#A #B #C #D #E #F\n\n#GalaxiesHighRedshift",
                 self._KEYWORDS,
-            )
+            ),
+            "## Tags\n\n#A #B #C #D #E\n\n#GalaxiesHighRedshift",
+        )
 
-    def test_validate_tags_section_rejects_science_tags_outside_keyword_list(self):
-        with self.assertRaisesRegex(ValueError, "supplied keyword list"):
-            validate_tags_section("## Tags\n\n#JWST\n\n#MadeUpScienceTag", self._KEYWORDS)
-
-    def test_validate_tags_section_requires_proper_noun_tags_to_appear_in_summary(self):
+    def test_validate_tags_section_trusts_proper_noun_tags(self):
         validate_tags_section(
             "## Tags\n\n#JamesWebbSpaceTelescope\n\n#GalaxiesHighRedshift",
             self._KEYWORDS,
-            summary_text="The James Webb Space Telescope measured the galaxy.",
         )
 
-        with self.assertRaisesRegex(ValueError, "supplied summary"):
-            validate_tags_section(
-                "## Tags\n\n#RomanSpaceTelescope\n\n#GalaxiesHighRedshift",
-                self._KEYWORDS,
-                summary_text="The James Webb Space Telescope measured the galaxy.",
-            )
+    def test_validate_tags_section_accepts_compound_tag_parts_from_summary(self):
+        validate_tags_section(
+            "## Tags\n\n#BehrooziSMHM\n\n#GalaxiesHighRedshift",
+            self._KEYWORDS,
+        )
 
-    @patch("summarise.interruptible_sleep", return_value=False)
-    def test_generate_tags_retries_when_science_tag_is_not_in_keyword_list(self, _mock_sleep):
-        call_count = 0
-
+    def test_generate_tags_saves_best_effort_when_science_tag_is_not_in_keyword_list(self):
         class Provider:
             def get_preferred_max_tokens(self):
                 return 100
 
             def process_document(self, **_kwargs):
-                nonlocal call_count
-                call_count += 1
-                if call_count == 1:
-                    return "## Tags\n\n#JWST\n\n#MadeUpScienceTag"
-                return "## Tags\n\n#JWST\n\n#CosmologyObservations"
+                return "## Tags\n\n#JWST\n\n#MadeUpScienceTag #CosmologyObservations"
 
         result = generate_tags("# Summary\n\nJWST observes galaxies.", self._KEYWORDS, Provider())
 
-        self.assertEqual(call_count, 2)
+        self.assertIn("#JWST", result)
         self.assertIn("#CosmologyObservations", result)
+        self.assertNotIn("#MadeUpScienceTag", result)
 
-    @patch("summarise.interruptible_sleep", return_value=False)
-    def test_generate_tags_retries_when_proper_noun_tag_is_not_in_summary(self, _mock_sleep):
-        call_count = 0
-
+    def test_generate_tags_keeps_proper_noun_tag_not_found_in_summary(self):
         class Provider:
             def get_preferred_max_tokens(self):
                 return 100
 
             def process_document(self, **_kwargs):
-                nonlocal call_count
-                call_count += 1
-                if call_count == 1:
-                    return "## Tags\n\n#RomanSpaceTelescope\n\n#CosmologyObservations"
-                return "## Tags\n\n#JamesWebbSpaceTelescope\n\n#CosmologyObservations"
+                return "## Tags\n\n#RomanSpaceTelescope\n\n#CosmologyObservations"
 
         result = generate_tags(
             "# Summary\n\nThe James Webb Space Telescope observes galaxies.",
@@ -478,8 +531,31 @@ class LocalModelOptimisationTests(unittest.TestCase):
             Provider(),
         )
 
-        self.assertEqual(call_count, 2)
-        self.assertIn("#JamesWebbSpaceTelescope", result)
+        self.assertIn("#RomanSpaceTelescope", result)
+
+    def test_generate_tags_falls_back_when_response_has_no_parseable_tags(self):
+        class Provider:
+            def get_preferred_max_tokens(self):
+                return 100
+
+            def process_document(self, **_kwargs):
+                return "## Tags\n\nNo useful tags."
+
+        result = generate_tags(
+            "# Summary\n\nCosmology observations of galaxies.",
+            self._KEYWORDS,
+            Provider(),
+        )
+
+        self.assertIn("#CosmologyObservations", result)
+
+    def test_build_fallback_tags_derives_science_tags_from_summary(self):
+        result = build_fallback_tags(
+            "# Summary\n\nCosmology observations of galaxies.",
+            self._KEYWORDS,
+        )
+
+        self.assertIn("#CosmologyObservations", result)
 
     def test_insert_section_places_generated_content_before_references(self):
         summary = "# Paper\n\n## Results\n\n- Result[^1]\n\n## References\n\n[^1]: \"quote\""
@@ -500,7 +576,7 @@ class LocalModelOptimisationTests(unittest.TestCase):
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
-                    return "## Tags\n\n#OnlyOneLine"
+                    return "## Tags\n\nNo parseable tags"
                 return "## Tags\n\n#JWST\n\n#CosmologyObservations"
 
         result = _call_llm_with_retry(
@@ -599,7 +675,7 @@ class LocalModelOptimisationTests(unittest.TestCase):
         self.assertNotIn("## Tags", sent_user_prompt)
         self.assertNotIn("#CosmologyObservations", sent_user_prompt)
         self.assertIn("Main science result", captured["glossary_summary"])
-        self.assertIn("## Glossary", captured["tags_summary"])
+        self.assertNotIn("## Glossary", captured["tags_summary"])
         self.assertIn("#CosmologyObservations", captured["tag_keywords"])
         saved_summary = mock_save.call_args.args[0]
         self.assertLess(saved_summary.index("## Glossary"), saved_summary.index("## Tags"))

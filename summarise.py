@@ -121,6 +121,7 @@ DEFAULT_KEYWORD_HEADINGS = (
     "ASTRONOMICAL INSTRUMENTATION, METHODS AND TECHNIQUES",
     "ASTRONOMICAL DATABASES",
 )
+GLOSSARY_MAX_TERMS = 8
 
 MONTH_NAMES = {
     1: "January",
@@ -425,17 +426,32 @@ def _render_keyword_sections(sections, headings):
     return "\n\n".join(rendered_sections)
 
 
-def extract_keyword_tags(keywords):
-    """Return the allowed hashtag tokens from a grouped keyword list."""
-    return {
-        match.group(0)
-        for match in re.finditer(r"#[A-Za-z0-9][A-Za-z0-9]*", keywords or "")
-    }
+def iter_keyword_tags(keywords):
+    """Yield allowed hashtag tokens from a grouped keyword list in source order."""
+    seen_tags = set()
+    for match in re.finditer(r"#[A-Za-z0-9][A-Za-z0-9]*", keywords or ""):
+        tag = match.group(0)
+        if tag in seen_tags:
+            continue
+        seen_tags.add(tag)
+        yield tag
 
 
-def _normalise_tag_trace_text(value):
-    """Normalise text for checking that a generated tag appears in a summary."""
+def _normalise_search_text(value):
+    """Normalise text for lightweight tag fallback matching."""
     return re.sub(r"[^A-Za-z0-9]+", "", value or "").lower()
+
+
+def _split_tag_words(value):
+    """Split a CamelCase/acronym tag into searchable words."""
+    return [
+        part.lower()
+        for part in re.findall(
+            r"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|\d+",
+            value or "",
+        )
+        if len(part) > 1
+    ]
 
 
 def filter_keywords_for_categories(keywords, categories):
@@ -1084,7 +1100,9 @@ def create_system_prompt():
         "9. Use bold for key terms on first mention\n"
         "10. Use italics for emphasis and paper names\n"
         "11. If you cannot find an exact supporting quote, do not make the statement\n"
-        "12. ALWAYS include a ## References section at the end listing every footnote "
+        "12. Use the paper's specific names for important instruments, surveys, "
+        "datasets, software, models, methods, and acronyms where central to a point\n"
+        "13. ALWAYS include a ## References section at the end listing every footnote "
         "definition as [^N]: \"exact quote\" (Section X.Y, p.Z)\n"
         "</rules>"
     )
@@ -1277,6 +1295,71 @@ def _is_markdown_separator_row(cells):
     return all(re.match(r"^:?-{3,}:?$", cell) for cell in cells)
 
 
+def _extract_tags_from_line(line):
+    """Extract canonical hashtags from a generated tag line."""
+    tags = []
+    for match in re.finditer(r"#[A-Za-z0-9][A-Za-z0-9_./-]*", line or ""):
+        token = "#" + re.sub(r"[^A-Za-z0-9]+", "", match.group(0).lstrip("#"))
+        if token not in tags:
+            tags.append(token)
+    return tags
+
+
+def _append_unique_tag(tags, tag):
+    """Append a tag if it is present and not already in the list."""
+    if tag and tag not in tags:
+        tags.append(tag)
+
+
+def _render_tags_section(proper_tags, science_tags):
+    """Render a canonical Tags section from classified tag lists."""
+    lines = ["## Tags", ""]
+    if proper_tags:
+        lines.append(" ".join(proper_tags[:5]))
+    if science_tags:
+        if proper_tags:
+            lines.append("")
+        lines.append(" ".join(science_tags[:5]))
+    return "\n".join(lines).rstrip()
+
+
+def normalise_tags_section(section_markdown, available_keywords=None):
+    """Return a canonical Tags section after classifying candidate tags."""
+    section = _normalise_generated_section(section_markdown, "## Tags")
+    tag_lines = _non_empty_section_lines(section, "## Tags")
+    allowed_science_tags = (
+        set(iter_keyword_tags(available_keywords)) if available_keywords is not None else None
+    )
+    proper_tags = []
+    science_tags = []
+    dropped_science_tags = []
+
+    for line_index, line in enumerate(tag_lines):
+        for tag in _extract_tags_from_line(line):
+            if allowed_science_tags is not None and tag in allowed_science_tags:
+                _append_unique_tag(science_tags, tag)
+            elif allowed_science_tags is not None and line_index > 0:
+                _append_unique_tag(dropped_science_tags, tag)
+            elif allowed_science_tags is None and line_index > 0:
+                _append_unique_tag(science_tags, tag)
+            else:
+                _append_unique_tag(proper_tags, tag)
+
+    if dropped_science_tags:
+        logging.warning(
+            "Dropped science tags outside supplied keyword list: %s",
+            ", ".join(dropped_science_tags),
+        )
+    if len(proper_tags) > 5:
+        logging.warning("Truncated proper-noun tags to 5 entries")
+    if len(science_tags) > 5:
+        logging.warning("Truncated science tags to 5 entries")
+    if not proper_tags and not science_tags:
+        raise ValueError("Tags section did not contain any parseable hashtags")
+
+    return _render_tags_section(proper_tags, science_tags)
+
+
 def validate_glossary_section(section_markdown):
     """Validate generated glossary markdown."""
     section = _normalise_generated_section(section_markdown, "## Glossary")
@@ -1300,54 +1383,25 @@ def validate_glossary_section(section_markdown):
             raise ValueError("Glossary table rows must include a term and definition")
     if not term_rows:
         raise ValueError("Glossary table must contain at least one term row")
+    if len(term_rows) > GLOSSARY_MAX_TERMS:
+        raise ValueError(f"Glossary table must contain no more than {GLOSSARY_MAX_TERMS} terms")
 
 
-def validate_tags_section(section_markdown, available_keywords=None, summary_text=None):
+def validate_tags_section(section_markdown, available_keywords=None):
     """Validate generated tag markdown."""
-    section = _normalise_generated_section(section_markdown, "## Tags")
+    section = normalise_tags_section(section_markdown, available_keywords)
     tag_lines = _non_empty_section_lines(section, "## Tags")
-    if len(tag_lines) != 2:
-        raise ValueError("Tags section must contain exactly two hashtag lines")
-    parsed_lines = []
     for line in tag_lines:
         tags = line.split()
-        if not tags or not all(
-            re.match(r"^#[A-Za-z0-9][A-Za-z0-9]*$", tag) for tag in tags
-        ):
-            raise ValueError("Each Tags section line must contain only hashtags")
         if len(tags) > 5:
             raise ValueError("Each Tags section line must contain no more than 5 tags")
-        parsed_lines.append(tags)
-
-    if available_keywords is not None:
-        allowed_science_tags = extract_keyword_tags(available_keywords)
-        unknown_tags = [
-            tag for tag in parsed_lines[1] if tag not in allowed_science_tags
-        ]
-        if unknown_tags:
-            raise ValueError(
-                "Science-area tags must come from the supplied keyword list: "
-                + ", ".join(unknown_tags)
-            )
-
-    if summary_text is not None:
-        normalised_summary = _normalise_tag_trace_text(summary_text)
-        unsupported_tags = [
-            tag for tag in parsed_lines[0]
-            if _normalise_tag_trace_text(tag.lstrip("#")) not in normalised_summary
-        ]
-        if unsupported_tags:
-            raise ValueError(
-                "Proper-noun tags must appear in the supplied summary: "
-                + ", ".join(unsupported_tags)
-            )
 
 
 def build_glossary_prompt(summary_text):
     """Build the focused glossary-generation prompt."""
     system_prompt = (
         "You are an astrophysics editor. Return only the requested Markdown section. "
-        "Use UK English and define only technical terms that appear in the summary."
+        "Use UK English and define only specialised terms or acronyms from the summary."
     )
     user_prompt = (
         "Create a concise glossary for this completed paper summary.\n\n"
@@ -1356,6 +1410,7 @@ def build_glossary_prompt(summary_text):
         "| Term | Definition |\n"
         "|---|---|\n"
         "| **technical term** | One clear sentence explaining the term in context. |\n\n"
+        f"Use no more than {GLOSSARY_MAX_TERMS} entries. Skip common scientific terms.\n"
         "Do not include introductory text, commentary, or any other section.\n\n"
         "---BEGIN SUMMARY---\n"
         f"{summary_text}\n"
@@ -1381,6 +1436,7 @@ def build_tags_prompt(summary_text, keywords):
         "models, software, or named catalogues from the summary only; no more than 5.\n"
         "- Second hashtag line: choose no more than 5 science-area hashtags from the "
         "available keyword list only.\n"
+        "- Use spaces between hashtags, not commas, bullets, or labels.\n"
         "- If fewer than 5 tags are justified, use fewer.\n"
         "- Do not include introductory text, commentary, or any other section.\n\n"
         "Available science-area keywords:\n"
@@ -1407,21 +1463,35 @@ def generate_glossary(summary_text, provider):
 
 
 def generate_tags(summary_text, keywords, provider):
-    """Generate and validate a tags section from the completed summary."""
+    """Generate a best-effort tags section from the completed summary."""
     system_prompt, user_prompt = build_tags_prompt(summary_text, keywords)
-    section = _call_llm_with_retry(
-        provider,
-        summary_text,
-        False,
-        system_prompt,
-        user_prompt,
-        response_validator=lambda response: validate_tags_section(
-            response,
-            available_keywords=keywords,
-            summary_text=summary_text,
-        ),
-    )
-    return _normalise_generated_section(section, "## Tags")
+    try:
+        section = _call_llm_with_retry(
+            provider,
+            summary_text,
+            False,
+            system_prompt,
+            user_prompt,
+        )
+        return normalise_tags_section(section, available_keywords=keywords)
+    except Exception as error:
+        logging.warning("Tag generation failed; using fallback tags: %s", error)
+        return build_fallback_tags(summary_text, keywords)
+
+
+def build_fallback_tags(summary_text, keywords):
+    """Build a minimal science-tag section from keyword matches in the summary."""
+    normalised_summary = _normalise_search_text(summary_text)
+    science_tags = []
+    for tag in iter_keyword_tags(keywords):
+        words = _split_tag_words(tag.lstrip("#"))
+        if words and all(word in normalised_summary for word in words):
+            science_tags.append(tag)
+        if len(science_tags) == 5:
+            break
+    if not science_tags:
+        logging.warning("Could not derive fallback tags from summary text")
+    return _render_tags_section([], science_tags)
 
 
 def insert_section(summary, section_markdown, before_heading="## References"):
@@ -1837,10 +1907,10 @@ def process_file(file_path, keywords, template, provider):
             require_generated_sections=False,
         )
 
+        tags_section = generate_tags(summary, filtered_keywords, provider)
+
         glossary_section = generate_glossary(summary, provider)
         summary = insert_section(summary, glossary_section)
-
-        tags_section = generate_tags(summary, filtered_keywords, provider)
         summary = insert_section(summary, tags_section)
         validate_summary(summary, source_metadata=source_metadata)
 
