@@ -7,6 +7,8 @@ from providers import create_provider
 from summarise import (
     _call_llm_with_retry,
     build_provider_config,
+    create_system_prompt,
+    create_user_prompt,
     extract_arxiv_categories_from_api_xml,
     extract_arxiv_categories_from_html,
     filter_keywords_for_categories,
@@ -333,6 +335,38 @@ class LocalModelOptimisationTests(unittest.TestCase):
             "PLANETARY SYSTEMS\n#PlanetsAndSatellitesDetection",
         ]
     )
+
+    def test_main_prompt_includes_worked_example_before_input(self):
+        prompt = create_user_prompt(
+            "Paper text here.",
+            "## Results\n\n- Bullet.[^1]\n\n## References\n\n[^1]: quote",
+            source_metadata=SourceMetadata(
+                source_type="arxiv",
+                identifier="2601.00001",
+                canonical_url="https://arxiv.org/abs/2601.00001",
+                published_label="January 2026",
+            ),
+            worked_example=(
+                "## Results\n\n"
+                "- Example result with a concrete value of $0.08$ dex.[^1]\n\n"
+                "## References\n\n"
+                "[^1]: \"Example quote.\" (Section 4.1, p.9)"
+            ),
+        )
+
+        self.assertIn("<worked_example>", prompt)
+        self.assertIn("concrete value of $0.08$ dex", prompt)
+        self.assertIn("do not copy its topic, claims, names, or references", prompt)
+        self.assertLess(prompt.index("<source_metadata>"), prompt.index("<worked_example>"))
+        self.assertLess(prompt.index("<worked_example>"), prompt.index("<input>"))
+
+    def test_main_system_prompt_keeps_named_entity_guidance_without_long_rule_list(self):
+        prompt = create_system_prompt()
+
+        self.assertIn("specific names for important instruments", prompt)
+        self.assertIn("number, sample size, named method", prompt)
+        self.assertIn("exact quote in quotation marks", prompt)
+        self.assertNotIn("13. ALWAYS", prompt)
 
     def test_extract_arxiv_categories_from_html_reads_primary_and_all_categories(self):
         html = """

@@ -6,9 +6,9 @@ Published: Month Year ([Link](<URL to paper>) <- ONLY if you see the arxiv or do
 
 ## Key Ideas
 
-- Blah blah blah[^1]
-- Blah blah blah[^2]  
-- Blah blah blah[^3]  
+- Concise key scientific claim with one supporting footnote.[^1]
+- Concise key scientific claim with one supporting footnote.[^2]
+- Concise key scientific claim with one supporting footnote.[^3]
 
 ## Introduction
 
@@ -44,6 +44,6 @@ Published: Month Year ([Link](<URL to paper>) <- ONLY if you see the arxiv or do
 
 ## References
 
-[^1]: "quote from paper" (Abstract, p.1)
-[^2]: "another quote” (Section 2.3, p.3)
-etc
+[^1]: "exact quote from paper" (Abstract, p.1)
+[^2]: "exact quote from paper" (Section 2.3, p.3)
+etc.

@@ -43,6 +43,9 @@ OUTPUT_DIR = SCRIPT_DIR / "output"
 LOGS_DIR = SCRIPT_DIR / "logs"
 DONE_DIR = SCRIPT_DIR / "processed"
 KNOWLEDGE_DIR = SCRIPT_DIR / "project_knowledge"
+SUMMARY_TEMPLATE_FILE = KNOWLEDGE_DIR / "paper-summary-template.md"
+SUMMARY_WORKED_EXAMPLE_FILE = KNOWLEDGE_DIR / "summary-worked-example.md"
+ASTRONOMY_KEYWORDS_FILE = KNOWLEDGE_DIR / "astronomy-keywords.txt"
 
 # Log file paths
 PROGRESS_FILE = LOGS_DIR / "completed.log"
@@ -367,18 +370,18 @@ def add_to_failed_files(filename, error):
 # --- File reading ---
 
 def read_project_knowledge():
-    """Read keywords and template files needed for prompts.
+    """Read project knowledge files needed for prompts.
 
     Raises an exception if critical files are missing.
     """
     try:
-        keywords_path = KNOWLEDGE_DIR / "astronomy-keywords.txt"
-        template_path = KNOWLEDGE_DIR / "paper-summary-template.md"
-        with open(keywords_path, "r", encoding="utf-8") as f:
+        with open(ASTRONOMY_KEYWORDS_FILE, "r", encoding="utf-8") as f:
             keywords = f.read()
-        with open(template_path, "r", encoding="utf-8") as f:
+        with open(SUMMARY_TEMPLATE_FILE, "r", encoding="utf-8") as f:
             template = f.read()
-        return keywords, template
+        with open(SUMMARY_WORKED_EXAMPLE_FILE, "r", encoding="utf-8") as f:
+            worked_example = f.read()
+        return keywords, template, worked_example
     except FileNotFoundError as e:
         logging.critical(f"CRITICAL: Project knowledge file not found: {e}. Cannot continue.")
         raise
@@ -606,6 +609,7 @@ def fit_prompt_to_provider_budget(
     system_prompt,
     paper_text,
     template,
+    worked_example="",
     source_metadata=None,
     is_pdf=False,
 ):
@@ -613,6 +617,7 @@ def fit_prompt_to_provider_budget(
     user_prompt = create_user_prompt(
         paper_text,
         template,
+        worked_example=worked_example,
         source_metadata=source_metadata,
         is_pdf=is_pdf,
     )
@@ -645,6 +650,7 @@ def fit_prompt_to_provider_budget(
         candidate_prompt = create_user_prompt(
             candidate_text,
             template,
+            worked_example=worked_example,
             source_metadata=source_metadata,
             is_pdf=is_pdf,
         )
@@ -1089,26 +1095,31 @@ def create_system_prompt():
         "identifying key scientific results and their significance.\n"
         "</role>\n\n"
         "<rules>\n"
-        "1. Write only in UK English using clear technical language\n"
-        "2. Use markdown formatting throughout\n"
-        "3. Use LaTeX for all mathematical expressions\n"
-        "4. Only include content from the provided paper\n"
-        "5. Every bullet point must have a supporting footnote\n"
-        "6. Footnotes must contain EXACT quotes - never paraphrase\n"
-        "7. Always enclose footnote quotes in quotation marks\n"
-        "8. Include page/section reference for every quote\n"
-        "9. Use bold for key terms on first mention\n"
-        "10. Use italics for emphasis and paper names\n"
-        "11. If you cannot find an exact supporting quote, do not make the statement\n"
-        "12. Use the paper's specific names for important instruments, surveys, "
+        "1. Use only information from the provided paper; if no exact quote supports "
+        "a claim, do not make the claim\n"
+        "2. Follow the template and worked example exactly: concise Markdown bullets, "
+        "UK English, LaTeX for mathematics, bold key technical terms on first mention, "
+        "and italics for paper or model names where natural\n"
+        "3. Each bullet must make one clear scientific claim and include the most "
+        "important concrete detail available: a number, sample size, named method, "
+        "parameter, comparison, or limitation\n"
+        "4. Preserve the paper's specific names for important instruments, surveys, "
         "datasets, software, models, methods, and acronyms where central to a point\n"
-        "13. ALWAYS include a ## References section at the end listing every footnote "
+        "5. Every bullet must end with one supporting footnote, and every footnote "
+        "must contain an exact quote in quotation marks plus a section/page reference\n"
+        "6. Always include a ## References section at the end listing every footnote "
         "definition as [^N]: \"exact quote\" (Section X.Y, p.Z)\n"
         "</rules>"
     )
 
 
-def create_user_prompt(paper_text, template, source_metadata=None, is_pdf=False):
+def create_user_prompt(
+    paper_text,
+    template,
+    source_metadata=None,
+    is_pdf=False,
+    worked_example="",
+):
     """Construct the user prompt with the task, template, and optionally the paper text.
 
     If paper_text is empty, the LLM receives the paper via other means (e.g. direct PDF upload).
@@ -1131,7 +1142,6 @@ def create_user_prompt(paper_text, template, source_metadata=None, is_pdf=False)
         "<template>\n"
         f"Use this exact structure:\n{template}\n"
         "</template>\n\n"
-        "</task>\n\n"
     )
 
     if source_metadata and source_metadata.canonical_url:
@@ -1152,6 +1162,18 @@ def create_user_prompt(paper_text, template, source_metadata=None, is_pdf=False)
                 "You MUST use this exact month and year in the Published line.\n"
             )
         base_prompt += "</source_metadata>\n\n"
+
+    if worked_example:
+        base_prompt += (
+            "<worked_example>\n"
+            "This fictional example shows the required density, bullet structure, "
+            "footnote style, and quote format. Imitate the style and formatting, "
+            "but do not copy its topic, claims, names, or references.\n\n"
+            f"{worked_example.strip()}\n"
+            "</worked_example>\n\n"
+        )
+
+    base_prompt += "</task>\n\n"
 
     if paper_text:
         base_prompt += (
@@ -1812,7 +1834,7 @@ def get_pending_files(input_dir, processed_log, failed_log):
 
 # --- Core processing ---
 
-def process_file(file_path, keywords, template, provider):
+def process_file(file_path, keywords, template, provider, worked_example=""):
     """Process a single input file through the full pipeline.
 
     Steps: read file -> build prompts -> call LLM (with retry) ->
@@ -1881,6 +1903,7 @@ def process_file(file_path, keywords, template, provider):
             system_prompt,
             paper_text,
             template,
+            worked_example=worked_example,
             source_metadata=source_metadata,
             is_pdf=is_pdf,
         )
@@ -1971,7 +1994,7 @@ def main(argv=None):
             dir_path.mkdir(exist_ok=True)
 
         # Load essential data
-        keywords, template = read_project_knowledge()
+        keywords, template, worked_example = read_project_knowledge()
         progress = load_progress()
         failed_files = load_failed_files()
         logging.info(f"Loaded {len(progress)} processed, {len(failed_files)} failed files")
@@ -1992,7 +2015,7 @@ def main(argv=None):
                     logging.info(f"--- Processing: {file_path.name} ---")
 
                     success, filename, error_msg = process_file(
-                        file_path, keywords, template, provider
+                        file_path, keywords, template, provider, worked_example
                     )
 
                     if success:
