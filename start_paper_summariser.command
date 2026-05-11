@@ -2,4 +2,4 @@
 
 cd "${0:a:h}"
 
-exec ./start_paper_summariser.sh cli copilot claude-sonnet-4.6 --effort high
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 exec ./start_paper_summariser.sh api openai-compatible minimax/minimax-m2.7

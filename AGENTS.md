@@ -23,11 +23,9 @@ cp .env.template .env  # then fill in API keys if you plan to use API mode
 # Run directly (foreground, for debugging)
 source myenv/bin/activate
 python3 summarise.py                              # default: cli claude
-python3 summarise.py cli claude
-python3 summarise.py api claude
-python3 summarise.py cli gemini gemini-2.5-flash
-python3 summarise.py cli opencode ollama/llama3.2
-python3 summarise.py api openai gpt-5.2
+python3 summarise.py cli claude claude-sonnet-4-latest --effort high
+python3 summarise.py cli copilot claude-sonnet-4.6 --effort high
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 python3 summarise.py api openai-compatible google/gemma-4-31b
 
 # Tests
 ./myenv/bin/python -m unittest tests/test_effort_support.py
@@ -46,8 +44,8 @@ The focused unit tests cover CLI argument parsing and CLI provider command const
 
 - **`providers/`** — Provider package with clean separation of API and CLI providers:
   - `base.py` — `Provider` base class defining the interface: `setup()`, `process_document()`, `get_max_context_size()`, `supports_direct_pdf()`, `validate_runtime_ready()`, `get_preferred_max_tokens()`.
-  - `api.py` — API providers: `ClaudeAPI`, `OpenAIAPI`, `GeminiAPI`, `PerplexityAPI`, `OllamaAPI`, `OpenAICompatibleAPI`. Each uses its SDK or direct HTTP. Gemini uses `system_instruction`. Perplexity uses the OpenAI SDK pointed at api.perplexity.ai. `OpenAICompatibleAPI` targets any `/v1/chat/completions` server (LM Studio, llama.cpp, vLLM, etc.).
-  - `cli.py` — CLI providers: `CLIProvider` base class with `ClaudeCLI`, `CodexCLI`, `GeminiCLI`, `CopilotCLI`, `OpenCodeCLI`. All use subprocess invocation in non-interactive mode.
+  - `api.py` — API providers: `ClaudeAPI`, `OpenAIAPI`, `GeminiAPI`, `PerplexityAPI`, `OllamaAPI`, `OpenAICompatibleAPI`. Each uses its SDK or direct HTTP. Gemini uses `system_instruction`. Perplexity uses the OpenAI SDK pointed at api.perplexity.ai. `OpenAICompatibleAPI` is the preferred local/open-model route and targets any `/v1/chat/completions` server (LM Studio, llama.cpp, Ollama's OpenAI-compatible endpoint, vLLM, LocalAI, etc.).
+  - `cli.py` — CLI providers: `CLIProvider` base class with `ClaudeCLI`, `CodexCLI`, `GeminiCLI`, `CopilotCLI`, `OpenCodeCLI`. All use subprocess invocation in non-interactive mode. OpenCode is retained as an optional CLI route, not the primary local-model path.
   - `__init__.py` — `create_provider(mode, provider_name, config)` factory with explicit registries and prerequisite validation.
 
 ### Processing Pipeline
@@ -122,10 +120,10 @@ API keys are loaded from `.env` via `python-dotenv`. They are only needed when u
 - `GOOGLE_API_KEY` (Gemini API)
 - `PERPLEXITY_API_KEY` (Perplexity API)
 - Ollama requires no key or URL config (defaults to `http://localhost:11434`)
-- `openai-compatible` requires `OPENAI_COMPATIBLE_BASE_URL` set in `.env`; see `.env.template` for examples
+- `openai-compatible` requires `OPENAI_COMPATIBLE_BASE_URL` set in `.env` or the launch environment; see README.md for the canonical setup examples
 - `openai-compatible` with a key-protected server: also set `api_key_env` in provider config to the env var name and define that key in `.env`
 - CLI tools (`claude`, `codex`, `gemini`, `copilot`, `opencode`) require no API keys
-- OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`); effort maps to provider-specific `--variant` values
+- OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`) and remains available when specifically needed; prefer `api openai-compatible` for local/open models
 
 ## Directory Notes
 

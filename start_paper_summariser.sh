@@ -8,10 +8,9 @@ mkdir -p input
 
 # Usage:
 #   ./start_paper_summariser.sh
-#   ./start_paper_summariser.sh cli gemini
-#   ./start_paper_summariser.sh cli claude --effort high
-#   ./start_paper_summariser.sh cli opencode ollama/llama3.2
-#   ./start_paper_summariser.sh api openai gpt-5.2
+#   ./start_paper_summariser.sh cli claude claude-sonnet-4-latest --effort high
+#   ./start_paper_summariser.sh cli copilot claude-sonnet-4.6 --effort high
+#   OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 ./start_paper_summariser.sh api openai-compatible google/gemma-4-31b
 # Default with no arguments: cli claude
 
 # Start the Python summariser

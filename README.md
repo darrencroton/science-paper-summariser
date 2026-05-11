@@ -59,8 +59,7 @@ mkdir -p input output processed logs
 
 - `cli` mode requirements:
   - Install the CLI you plan to use and make sure it is on `PATH`
-  - Supported CLI providers: `claude`, `gemini`, `codex`, `copilot`, `opencode`
-  - OpenCode must already have an authenticated or configured model available, or you must pass a `provider/model` override
+  - Supported CLI providers: `claude`, `copilot`, `codex`, `gemini`, `opencode`
 - `api` mode requirements:
   - Add the required credentials to `.env`
   - Supported API providers: `claude`, `gemini`, `openai`, `perplexity`, `ollama`, `openai-compatible`
@@ -73,7 +72,7 @@ OPENAI_API_KEY=your_key_here
 PERPLEXITY_API_KEY=your_key_here
 ```
 
-`ollama` and `openai-compatible` are local providers that do not require API keys in `.env`. Both require a reachable local inference server. `openai-compatible` additionally requires the server's `/v1` endpoint — set `OPENAI_COMPATIBLE_BASE_URL` in `.env` (see `.env.template` for examples). Both providers check connectivity at startup and fail immediately with a clear message if the server is unreachable.
+For local/open-weight models, prefer `api openai-compatible`. It works with any server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint, including LM Studio, llama.cpp, Ollama's OpenAI-compatible endpoint, vLLM, and LocalAI. Set `OPENAI_COMPATIBLE_BASE_URL` in `.env` or for the launch command; both `ollama` and `openai-compatible` check connectivity at startup and fail immediately if the server is unreachable.
 
 4. Make the scripts executable if needed:
 
@@ -97,24 +96,17 @@ Equivalent explicit form:
 python3 summarise.py cli claude
 ```
 
-More examples:
+Recommended launch profiles:
 
 ```bash
-python3 summarise.py cli gemini
-python3 summarise.py cli claude --effort high
-python3 summarise.py cli codex gpt-5.4
-python3 summarise.py cli codex gpt-5.4 --effort medium
-python3 summarise.py cli copilot
-python3 summarise.py cli copilot gpt-5.2 --effort low
-python3 summarise.py cli opencode
-python3 summarise.py cli opencode ollama/llama3.2
-python3 summarise.py cli opencode lmstudio/google/gemma-3n-e4b --effort high
-python3 summarise.py api claude claude-sonnet-4-latest
-python3 summarise.py api openai gpt-5.2
-python3 summarise.py api gemini gemini-2.5-pro
-python3 summarise.py api perplexity sonar-pro
-python3 summarise.py api ollama llama3.2
-OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 python3 summarise.py api openai-compatible qwen2.5:14b
+# Claude Code with Sonnet
+python3 summarise.py cli claude claude-sonnet-4-latest --effort high
+
+# GitHub Copilot with Sonnet
+python3 summarise.py cli copilot claude-sonnet-4.6 --effort high
+
+# Local/open model through an OpenAI-compatible LM Studio server
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 python3 summarise.py api openai-compatible google/gemma-4-31b
 ```
 
 Argument rules:
@@ -132,10 +124,9 @@ The wrapper script uses the same argument order:
 
 ```bash
 ./start_paper_summariser.sh
-./start_paper_summariser.sh cli gemini
-./start_paper_summariser.sh cli claude --effort high
-./start_paper_summariser.sh cli opencode ollama/llama3.2
-./start_paper_summariser.sh api openai gpt-5.2
+./start_paper_summariser.sh cli claude claude-sonnet-4-latest --effort high
+./start_paper_summariser.sh cli copilot claude-sonnet-4.6 --effort high
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1 ./start_paper_summariser.sh api openai-compatible google/gemma-4-31b
 ```
 
 When no arguments are given, the script starts `python3 summarise.py` which defaults to `cli claude`.
@@ -159,7 +150,7 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `gemini` | `gemini` binary on `PATH` | Ignores `--effort` and uses Gemini defaults |
 | `codex` | `codex` binary on `PATH` | Supports `--effort` via Codex config overrides |
 | `copilot` | `copilot` binary on `PATH` | Supports `--effort low|medium|high` |
-| `opencode` | `opencode` binary on `PATH` and a configured OpenCode model | Uses `opencode run --format json`; `model` maps to `--model provider/model`; `--effort` maps to provider-specific `--variant` |
+| `opencode` | `opencode` binary on `PATH` and a configured OpenCode model | Optional legacy path; use `api openai-compatible` for local/open models unless you specifically need OpenCode routing |
 
 ### API mode
 
@@ -172,19 +163,28 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `ollama` | Local Ollama server | No API key required; checks connectivity at startup |
 | `openai-compatible` | Local or self-hosted `/v1/chat/completions` server | Requires `OPENAI_COMPATIBLE_BASE_URL` in `.env` (or `base_url` in provider config); `api_key_env` optional; checks connectivity at startup |
 
-Each provider keeps its own default model or model-loading behaviour. Passing a third argument overrides that default. OpenCode uses its own model-loading order: `--model`, configured default model, last used model, then internal priority.
+Each provider keeps its own default model or model-loading behaviour. Passing a third argument overrides that default.
 In `cli` mode you can also pass `--effort low|medium|high`. Effort is currently unsupported in `api` mode.
 
-### Using OpenCode with local LLMs
+### Local/open models
 
-OpenCode connects to locally-hosted models through [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/) once they are configured as providers in OpenCode. Pass the model in `provider/model` format as the third argument:
+Use `api openai-compatible` for local/open-weight models served by LM Studio, llama.cpp, Ollama's OpenAI-compatible server, vLLM, LocalAI, or another `/v1/chat/completions` endpoint.
+
+Configure the base URL in `.env`:
 
 ```bash
-python3 summarise.py cli opencode ollama/llama3.2
-python3 summarise.py cli opencode lmstudio/google/gemma-3n-e4b
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1
 ```
 
-Any model reachable through OpenCode's provider configuration, local or cloud, is available without any other changes. `--effort` is forwarded to OpenCode as `--variant`; supported variant names depend on the selected OpenCode provider and model.
+Then pass the exact model ID reported by your server:
+
+```bash
+python3 summarise.py api openai-compatible google/gemma-4-31b
+```
+
+For LM Studio, start a local server and use the `/v1` URL shown by LM Studio, usually `http://localhost:1234/v1`. Check `http://localhost:1234/v1/models` if you need the exact model ID. For llama.cpp, use the server's `/v1` URL, commonly `http://localhost:8080/v1`. For Ollama's OpenAI-compatible endpoint, use `http://localhost:11434/v1`.
+
+OpenCode remains available as an optional CLI provider. If you use it, pass the model in OpenCode's `provider/model` format, for example `python3 summarise.py cli opencode ollama/llama3.2`.
 
 ## Tests
 
