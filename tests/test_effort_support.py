@@ -89,6 +89,25 @@ class ParseCliArgsTests(unittest.TestCase):
         )
         self.assertEqual(result, ("cli", "codex", "gpt-5.4", "high", mock_provider))
 
+    @patch.dict(
+        "os.environ",
+        {"OPENAI_COMPATIBLE_API_KEY_ENV": "LOCAL_LLM_API_KEY", "LOCAL_LLM_API_KEY": "test-key"},
+        clear=False,
+    )
+    @patch("openai.OpenAI")
+    def test_openai_compatible_reads_api_key_env_from_environment(self, mock_openai):
+        from providers.api import OpenAICompatibleAPI
+
+        OpenAICompatibleAPI(
+            {
+                "model": "local/model",
+                "base_url": "http://127.0.0.1:8080/v1",
+            }
+        )
+
+        mock_openai.assert_called_once()
+        self.assertEqual(mock_openai.call_args.kwargs["api_key"], "test-key")
+
 
 class PromptHardeningTests(unittest.TestCase):
     def test_normalise_extracted_text_removes_pathological_table_rows(self):

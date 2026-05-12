@@ -72,7 +72,7 @@ OPENAI_API_KEY=your_key_here
 PERPLEXITY_API_KEY=your_key_here
 ```
 
-For local/open-weight models, prefer `api openai-compatible`. It works with any server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint, including LM Studio, llama.cpp, Ollama's OpenAI-compatible endpoint, vLLM, and LocalAI. Set `OPENAI_COMPATIBLE_BASE_URL` in `.env` or for the launch command; both `ollama` and `openai-compatible` check connectivity at startup and fail immediately if the server is unreachable.
+For local/open-weight models, prefer `api openai-compatible`. It works with any server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint, including LM Studio, llama.cpp, Ollama's OpenAI-compatible endpoint, vLLM, and LocalAI. Set `OPENAI_COMPATIBLE_BASE_URL` in `.env` or for the launch command. If the server requires authentication, set `OPENAI_COMPATIBLE_API_KEY_ENV` to the name of the environment variable that contains the bearer token. Both `ollama` and `openai-compatible` check connectivity at startup and fail immediately if the server is unreachable.
 
 4. Make the scripts executable if needed:
 
@@ -161,7 +161,7 @@ Summaries are written to `output/`. Processed papers are moved to `processed/`. 
 | `openai` | `OPENAI_API_KEY` | OpenAI API |
 | `perplexity` | `PERPLEXITY_API_KEY` | Perplexity API |
 | `ollama` | Local Ollama server | No API key required; checks connectivity at startup |
-| `openai-compatible` | Local or self-hosted `/v1/chat/completions` server | Requires `OPENAI_COMPATIBLE_BASE_URL` in `.env` (or `base_url` in provider config); `api_key_env` optional; checks connectivity at startup |
+| `openai-compatible` | Local or self-hosted `/v1/chat/completions` server | Requires `OPENAI_COMPATIBLE_BASE_URL` in `.env` or launch environment; authenticated servers also require `OPENAI_COMPATIBLE_API_KEY_ENV` pointing at the bearer-token env var; checks connectivity at startup |
 
 Each provider keeps its own default model or model-loading behaviour. Passing a third argument overrides that default.
 In `cli` mode you can also pass `--effort low|medium|high`. Effort is currently unsupported in `api` mode.
@@ -174,6 +174,33 @@ Configure the base URL in `.env`:
 
 ```bash
 OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1
+```
+
+For an authenticated llama.cpp router, keep the key outside the repo:
+
+```bash
+mkdir -p ~/.llm
+chmod 700 ~/.llm
+printf 'export LOCAL_LLM_API_KEY=%q\n' '<router-api-key>' > ~/.llm/.env.llm
+chmod 600 ~/.llm/.env.llm
+```
+
+Then either source that file before launching:
+
+```bash
+source ~/.llm/.env.llm
+OPENAI_COMPATIBLE_BASE_URL=https://host.tailnet.ts.net/v1 \
+OPENAI_COMPATIBLE_API_KEY_ENV=LOCAL_LLM_API_KEY \
+python3 summarise.py api openai-compatible minimax/minimax-m2.7-q8
+```
+
+Or use the provided macOS launcher pattern:
+
+```zsh
+source "$HOME/.llm/.env.llm"
+export OPENAI_COMPATIBLE_BASE_URL="https://host.tailnet.ts.net/v1"
+export OPENAI_COMPATIBLE_API_KEY_ENV="LOCAL_LLM_API_KEY"
+exec ./start_paper_summariser.sh api openai-compatible minimax/minimax-m2.7-q8
 ```
 
 Then pass the exact model ID reported by your server:

@@ -362,7 +362,11 @@ class OpenAICompatibleAPI(Provider):
                 "OpenAI-compatible API provider requires 'model' in config."
             )
 
-        self.api_key_env = str(self.config.get("api_key_env") or "").strip()
+        self.api_key_env = str(
+            self.config.get("api_key_env")
+            or os.getenv("OPENAI_COMPATIBLE_API_KEY_ENV")
+            or ""
+        ).strip()
         self.api_key = os.getenv(self.api_key_env) if self.api_key_env else ""
 
         self.client = openai.OpenAI(

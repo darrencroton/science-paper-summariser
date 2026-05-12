@@ -123,7 +123,7 @@ API keys are loaded from `.env` via `python-dotenv`. They are only needed when u
 - `PERPLEXITY_API_KEY` (Perplexity API)
 - Ollama requires no key or URL config (defaults to `http://localhost:11434`)
 - `openai-compatible` requires `OPENAI_COMPATIBLE_BASE_URL` set in `.env` or the launch environment; see README.md for the canonical setup examples
-- `openai-compatible` with a key-protected server: also set `api_key_env` in provider config to the env var name and define that key in `.env`
+- `openai-compatible` with a key-protected server: set `OPENAI_COMPATIBLE_API_KEY_ENV` to the env var name containing the bearer token, and define the actual key outside the repo, preferably in `~/.llm/.env.llm`
 - CLI tools (`claude`, `codex`, `gemini`, `copilot`, `opencode`) require no API keys
 - OpenCode model selection uses `--model provider/model` (e.g. `ollama/llama3.2`) and remains available when specifically needed; prefer `api openai-compatible` for local/open models
 
