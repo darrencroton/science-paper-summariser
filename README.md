@@ -174,6 +174,8 @@ Configure the base URL in `.env`:
 
 ```bash
 OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1
+# Optional; default is 3600 seconds for long local generations.
+OPENAI_COMPATIBLE_TIMEOUT=3600
 ```
 
 For an authenticated llama.cpp router, keep the key outside the repo:

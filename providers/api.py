@@ -388,9 +388,19 @@ class OpenAICompatibleAPI(Provider):
     default_context_size = 128_000
     # Local/reasoning models consume thinking tokens inside the output budget.
     default_max_output_tokens = 32_768
+    # Full-paper local generations can run for tens of minutes at local decode speeds.
+    default_timeout = 3600
 
     def supports_direct_pdf(self):
         return False
+
+    def _get_timeout(self):
+        """Return the request timeout for long-running local inference."""
+        return float(
+            self.config.get("timeout")
+            or os.getenv("OPENAI_COMPATIBLE_TIMEOUT")
+            or self.default_timeout
+        )
 
     def setup(self):
         """Initialise an OpenAI client pointed at the configured compatible endpoint."""
@@ -423,12 +433,12 @@ class OpenAICompatibleAPI(Provider):
         self.client = openai.OpenAI(
             api_key=self.api_key or "not-needed",
             base_url=self.base_url,
-            timeout=float(self.config.get("timeout", 300)),
+            timeout=self._get_timeout(),
         )
 
     def validate_runtime_ready(self):
         """Check the endpoint is reachable and the configured model is available."""
-        timeout = min(float(self.config.get("timeout", 300)), 15.0)
+        timeout = min(self._get_timeout(), 15.0)
         headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -469,7 +479,9 @@ class OpenAICompatibleAPI(Provider):
         )
 
         choice = response.choices[0]
-        if choice.finish_reason == "length":
+        finish_reason = getattr(choice, "finish_reason", None)
+        LOGGER.info("OpenAI-compatible API response finish_reason=%s", finish_reason)
+        if finish_reason == "length":
             LOGGER.warning(
                 "OpenAI-compatible API response hit the token limit "
                 "(finish_reason=length, max_tokens=%d); output may be truncated mid-sentence.",

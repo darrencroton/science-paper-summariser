@@ -14,6 +14,7 @@ from summarise import (
     extract_arxiv_categories_from_api_xml,
     extract_arxiv_categories_from_html,
     filter_keywords_for_categories,
+    find_summary_text_quality_warnings,
     build_fallback_tags,
     generate_glossary,
     generate_tags,
@@ -111,6 +112,66 @@ class ParseCliArgsTests(unittest.TestCase):
 
         mock_openai.assert_called_once()
         self.assertEqual(mock_openai.call_args.kwargs["api_key"], "test-key")
+        self.assertEqual(mock_openai.call_args.kwargs["timeout"], 3600)
+
+    @patch.dict(
+        "os.environ",
+        {"OPENAI_COMPATIBLE_API_KEY_ENV": "", "OPENAI_COMPATIBLE_TIMEOUT": "1800"},
+        clear=False,
+    )
+    @patch("openai.OpenAI")
+    def test_openai_compatible_reads_timeout_from_environment(self, mock_openai):
+        from providers.api import OpenAICompatibleAPI
+
+        OpenAICompatibleAPI(
+            {
+                "model": "local/model",
+                "base_url": "http://127.0.0.1:8080/v1",
+            }
+        )
+
+        mock_openai.assert_called_once()
+        self.assertEqual(mock_openai.call_args.kwargs["timeout"], 1800.0)
+
+    @patch.dict("os.environ", {"OPENAI_COMPATIBLE_API_KEY_ENV": ""}, clear=False)
+    def test_openai_compatible_logs_finish_reason(self):
+        from providers.api import OpenAICompatibleAPI
+
+        class FakeCompletions:
+            def create(self, **_kwargs):
+                message = type("Message", (), {"content": "model output"})
+                choice = type("Choice", (), {"message": message, "finish_reason": "stop"})
+                return type("Response", (), {"choices": [choice]})()
+
+        class FakeClient:
+            def __init__(self, **_kwargs):
+                self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+        with patch("openai.OpenAI", FakeClient):
+            provider = OpenAICompatibleAPI(
+                {
+                    "model": "local/model",
+                    "base_url": "http://127.0.0.1:8080/v1",
+                }
+            )
+            with self.assertLogs("providers.api", level="INFO") as logs:
+                provider.process_document("", False, "system", "user", max_tokens=1024)
+
+        self.assertTrue(any("finish_reason=stop" in message for message in logs.output))
+
+
+class SummaryTextQualityWarningTests(unittest.TestCase):
+    def test_finds_common_local_model_text_blemishes(self):
+        summary = (
+            "# Paper\n\n"
+            "- A claim about constraints onIMF universality.[^1]\n"
+            "| **CHIMES** | An non-equilibrium chemistry module. |\n"
+            '[^1]: "To constraindiffusion, we use abundances." (Section 1, p.1)\n'
+        )
+
+        warnings = find_summary_text_quality_warnings(summary)
+
+        self.assertEqual({warning[2] for warning in warnings}, {"onIMF", "An non-equilibrium", "constraindiffusion"})
 
 
 class PromptHardeningTests(unittest.TestCase):
