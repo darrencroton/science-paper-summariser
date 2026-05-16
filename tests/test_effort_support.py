@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 from providers.cli import ClaudeCLI, CodexCLI, CopilotCLI, GeminiCLI, OpenCodeCLI
 from providers import create_provider
 from summarise import (
+    _call_glossary_llm_with_retry,
     _call_llm_with_retry,
+    _has_markdown_section,
     build_provider_config,
     create_system_prompt,
     create_user_prompt,
@@ -13,6 +15,7 @@ from summarise import (
     extract_arxiv_categories_from_html,
     filter_keywords_for_categories,
     build_fallback_tags,
+    generate_glossary,
     generate_tags,
     fit_prompt_to_provider_budget,
     insert_section,
@@ -26,6 +29,7 @@ from summarise import (
     validate_startup_selection,
     validate_tags_section,
 )
+from providers.api import _lookup_env_file_value, _resolve_api_key
 
 
 class DummyBudgetedProvider:
@@ -556,13 +560,19 @@ class LocalModelOptimisationTests(unittest.TestCase):
             self._KEYWORDS,
         )
 
-    def test_generate_tags_saves_best_effort_when_science_tag_is_not_in_keyword_list(self):
+    def test_generate_tags_retries_and_drops_unknown_science_tags(self):
+        """Unknown science tags trigger a retry; the first valid response is used."""
+        responses = iter([
+            "## Tags\n\n#JWST\n\n#MadeUpScienceTag #CosmologyObservations",
+            "## Tags\n\n#JWST\n\n#CosmologyObservations",
+        ])
+
         class Provider:
             def get_preferred_max_tokens(self):
                 return 100
 
             def process_document(self, **_kwargs):
-                return "## Tags\n\n#JWST\n\n#MadeUpScienceTag #CosmologyObservations"
+                return next(responses)
 
         result = generate_tags("# Summary\n\nJWST observes galaxies.", self._KEYWORDS, Provider())
 
@@ -912,6 +922,279 @@ class ReferencesEnforcementTests(unittest.TestCase):
             _call_llm_with_retry(Provider(), "", False, "sys", "usr", max_retries=2)
 
         self.assertIn("## References", str(ctx.exception))
+
+
+class HasMarkdownSectionTests(unittest.TestCase):
+    def test_detects_present_heading(self):
+        self.assertTrue(_has_markdown_section("# Title\n\n## Glossary\n\ncontent", "## Glossary"))
+
+    def test_returns_false_when_absent(self):
+        self.assertFalse(_has_markdown_section("# Title\n\n## Results\n\ncontent", "## Glossary"))
+
+    def test_case_insensitive(self):
+        self.assertTrue(_has_markdown_section("## GLOSSARY\n\ncontent", "## Glossary"))
+
+    def test_does_not_match_partial_line(self):
+        self.assertFalse(_has_markdown_section("Some text ## Glossary inline", "## Glossary"))
+
+    def test_empty_document(self):
+        self.assertFalse(_has_markdown_section("", "## Glossary"))
+
+
+_VALID_GLOSSARY = (
+    "## Glossary\n\n"
+    "| Term | Definition |\n"
+    "|---|---|\n"
+    "| IMF | Initial Mass Function |\n"
+)
+
+
+class GlossaryLlmRetryTests(unittest.TestCase):
+    class _StubProvider:
+        def get_preferred_max_tokens(self):
+            return 100
+
+        def process_document(self, **_kwargs):
+            raise NotImplementedError("override per test")
+
+    @patch("summarise.interruptible_sleep", return_value=False)
+    def test_returns_valid_glossary_on_first_success(self, _mock_sleep):
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                return _VALID_GLOSSARY
+
+        result = _call_glossary_llm_with_retry(Provider(), "sys", "usr")
+
+        self.assertIn("## Glossary", result)
+        self.assertIn("IMF", result)
+
+    @patch("summarise.interruptible_sleep", return_value=False)
+    def test_preserves_last_candidate_when_validation_always_fails(self, _mock_sleep):
+        """All attempts produce non-empty but invalid glossaries; the last one is preserved."""
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                return "## Glossary\n\nnot a valid table"
+
+        result = _call_glossary_llm_with_retry(Provider(), "sys", "usr", max_retries=2)
+
+        self.assertIn("## Glossary", result)
+        self.assertIn("not a valid table", result)
+
+    @patch("summarise.interruptible_sleep", return_value=False)
+    def test_raises_when_all_responses_are_empty(self, _mock_sleep):
+        """No usable candidate should propagate the error, not silently succeed."""
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                return ""
+
+        with self.assertRaises(Exception):
+            _call_glossary_llm_with_retry(Provider(), "sys", "usr", max_retries=2)
+
+    @patch("summarise.interruptible_sleep", return_value=True)
+    def test_raises_interrupted_error_on_shutdown_during_retry_wait(self, _mock_sleep):
+        call_count = 0
+
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                nonlocal call_count
+                call_count += 1
+                return "## Glossary\n\nnot a table"
+
+        with self.assertRaises(InterruptedError):
+            _call_glossary_llm_with_retry(Provider(), "sys", "usr", max_retries=3)
+
+        self.assertEqual(call_count, 1)
+
+    @patch("summarise.interruptible_sleep", return_value=False)
+    def test_retries_then_preserves_first_candidate_after_second_fails(self, _mock_sleep):
+        """Verify last_candidate tracks the most recent non-empty response."""
+        responses = iter([
+            "## Glossary\n\nnot a table — attempt 1",
+            "## Glossary\n\nnot a table — attempt 2",
+        ])
+
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                return next(responses)
+
+        result = _call_glossary_llm_with_retry(Provider(), "sys", "usr", max_retries=2)
+
+        self.assertIn("attempt 2", result)
+        self.assertNotIn("attempt 1", result)
+
+    @patch("summarise.interruptible_sleep", return_value=True)
+    def test_generate_glossary_propagates_interrupted_error(self, _mock_sleep):
+        """InterruptedError from the retry loop must escape generate_glossary, not be swallowed."""
+        class Provider(self._StubProvider):
+            def process_document(self, **_kwargs):
+                return "## Glossary\n\nnot a table"
+
+        with self.assertRaises(InterruptedError):
+            generate_glossary("# Summary\n\ntext.", Provider())
+
+
+class DuplicateGlossaryGuardTests(unittest.TestCase):
+    """generate_glossary must not be called when ## Glossary is already in the summary."""
+
+    _KEYWORDS = LocalModelOptimisationTests._KEYWORDS
+
+    _SUMMARY_WITH_GLOSSARY = (
+        "# Paper\n\n"
+        "Authors: Smith A.\n"
+        "Published: January 2026 ([Link](https://arxiv.org/abs/2601.00001))\n\n"
+        "## Results\n\n"
+        "- Main result[^1]\n\n"
+        "## Glossary\n\n"
+        "| Term | Definition |\n"
+        "|---|---|\n"
+        "| IMF | Initial Mass Function |\n\n"
+        "## References\n\n"
+        "[^1]: \"Main result.\" (Abstract, p.1)\n"
+    )
+
+    def test_generate_glossary_not_called_when_already_present(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=3000)
+
+        with (
+            patch("summarise.read_input_file", return_value=("# Paper\n\nText.", None)),
+            patch("summarise._write_debug_prompt"),
+            patch("summarise._call_llm_with_retry", return_value=self._SUMMARY_WITH_GLOSSARY),
+            patch("summarise.strip_preamble", side_effect=lambda s: s),
+            patch("summarise.enforce_source_metadata", side_effect=lambda s, _m: s),
+            patch(
+                "summarise.extract_source_metadata",
+                return_value=SourceMetadata(
+                    source_type="arxiv",
+                    identifier="2601.00001",
+                    canonical_url="https://arxiv.org/abs/2601.00001",
+                    published_label="January 2026",
+                    primary_category="astro-ph.CO",
+                    categories=("astro-ph.CO",),
+                ),
+            ),
+            patch("summarise.generate_glossary") as mock_glossary,
+            patch("summarise.generate_tags", return_value="## Tags\n\n#CosmologyObservations"),
+            patch("summarise.extract_metadata", return_value=("Paper", ["Smith"], "2026")),
+            patch("summarise.save_summary", return_value=Path("output/Paper.md")),
+            patch("summarise.move_to_done", return_value=Path("processed/Paper.txt")),
+        ):
+            success, _name, error = process_file(
+                Path("paper.txt"),
+                keywords=self._KEYWORDS,
+                template="## Results\n\n## References",
+                provider=provider,
+            )
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        mock_glossary.assert_not_called()
+
+    def test_generate_glossary_called_when_absent(self):
+        provider = DummyBudgetedProvider(max_prompt_chars=3000)
+        summary_without_glossary = self._SUMMARY_WITH_GLOSSARY.replace(
+            "## Glossary\n\n| Term | Definition |\n|---|---|\n| IMF | Initial Mass Function |\n\n", ""
+        )
+
+        with (
+            patch("summarise.read_input_file", return_value=("# Paper\n\nText.", None)),
+            patch("summarise._write_debug_prompt"),
+            patch("summarise._call_llm_with_retry", return_value=summary_without_glossary),
+            patch("summarise.strip_preamble", side_effect=lambda s: s),
+            patch("summarise.enforce_source_metadata", side_effect=lambda s, _m: s),
+            patch(
+                "summarise.extract_source_metadata",
+                return_value=SourceMetadata(
+                    source_type="arxiv",
+                    identifier="2601.00001",
+                    canonical_url="https://arxiv.org/abs/2601.00001",
+                    published_label="January 2026",
+                    primary_category="astro-ph.CO",
+                    categories=("astro-ph.CO",),
+                ),
+            ),
+            patch("summarise.generate_glossary", return_value=_VALID_GLOSSARY) as mock_glossary,
+            patch("summarise.generate_tags", return_value="## Tags\n\n#CosmologyObservations"),
+            patch("summarise.extract_metadata", return_value=("Paper", ["Smith"], "2026")),
+            patch("summarise.save_summary", return_value=Path("output/Paper.md")),
+            patch("summarise.move_to_done", return_value=Path("processed/Paper.txt")),
+        ):
+            success, _name, error = process_file(
+                Path("paper.txt"),
+                keywords=self._KEYWORDS,
+                template="## Results\n\n## References",
+                provider=provider,
+            )
+
+        self.assertTrue(success)
+        mock_glossary.assert_called_once()
+
+
+class EnvFileKeyResolverTests(unittest.TestCase):
+    def _write_env_file(self, tmp_path, content):
+        env_file = tmp_path / ".env.llm"
+        env_file.write_text(content, encoding="utf-8")
+        return env_file
+
+    def test_reads_plain_value(self, tmp_path=None):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), "MY_KEY=sk-abc123\n")
+            self.assertEqual(_lookup_env_file_value(env_file, "MY_KEY"), "sk-abc123")
+
+    def test_strips_export_prefix(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), "export MY_KEY=sk-export\n")
+            self.assertEqual(_lookup_env_file_value(env_file, "MY_KEY"), "sk-export")
+
+    def test_handles_quoted_value(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), 'MY_KEY="sk-quoted"\n')
+            self.assertEqual(_lookup_env_file_value(env_file, "MY_KEY"), "sk-quoted")
+
+    def test_ignores_comment_lines(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), "# MY_KEY=should-be-ignored\nMY_KEY=real\n")
+            self.assertEqual(_lookup_env_file_value(env_file, "MY_KEY"), "real")
+
+    def test_returns_empty_when_key_absent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), "OTHER_KEY=value\n")
+            self.assertEqual(_lookup_env_file_value(env_file, "MY_KEY"), "")
+
+    def test_returns_empty_when_file_missing(self):
+        self.assertEqual(_lookup_env_file_value(Path("/nonexistent/.env"), "MY_KEY"), "")
+
+    def test_resolve_prefers_process_env(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), "MY_KEY=from-file\n")
+            with patch.dict(os.environ, {"MY_KEY": "from-env"}):
+                result = _resolve_api_key("MY_KEY", env_file)
+            self.assertEqual(result, "from-env")
+
+    def test_resolve_falls_back_to_env_file(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), "MY_KEY=from-file\n")
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("MY_KEY", None)
+                result = _resolve_api_key("MY_KEY", env_file)
+            self.assertEqual(result, "from-file")
+
+    def test_resolve_raises_when_key_not_found_anywhere(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            env_file = self._write_env_file(Path(d), "OTHER_KEY=value\n")
+            os.environ.pop("MY_KEY", None)
+            with self.assertRaises(ValueError):
+                _resolve_api_key("MY_KEY", env_file)
+
+    def test_resolve_returns_empty_when_api_key_env_not_set(self):
+        self.assertEqual(_resolve_api_key("", None), "")
 
 
 if __name__ == "__main__":

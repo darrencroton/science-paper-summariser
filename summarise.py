@@ -50,7 +50,7 @@ ASTRONOMY_KEYWORDS_FILE = KNOWLEDGE_DIR / "astronomy-keywords.txt"
 # Log file paths
 PROGRESS_FILE = LOGS_DIR / "completed.log"
 FAILED_FILE = LOGS_DIR / "failed.log"
-PROMPT_DEBUG_FILE = LOGS_DIR / "prompt.txt"
+PROMPT_DEBUG_DIR = LOGS_DIR / "debug"
 ARXIV_CATEGORY_CACHE_FILE = LOGS_DIR / "arxiv_categories.json"
 
 # --- Global shutdown flag ---
@@ -1109,6 +1109,12 @@ def create_system_prompt():
         "must contain an exact quote in quotation marks plus a section/page reference\n"
         "6. Always include a ## References section at the end listing every footnote "
         "definition as [^N]: \"exact quote\" (Section X.Y, p.Z)\n"
+        "7. Treat Discussion and Weaknesses as critical engagement, not recap. Discussion "
+        "bullets should place the paper against prior models, surveys, datasets, or observations "
+        "the paper builds on or contradicts. Weaknesses bullets must be concrete and named "
+        "(e.g. \"omits Population III stars\", \"dust model untested at z>7\", \"uniform "
+        "ionising background ignores reionisation patchiness\"); avoid generic hedges "
+        "(\"limited sample\", \"more work needed\")\n"
         "</rules>"
     )
 
@@ -1187,15 +1193,16 @@ def create_user_prompt(
 
 # --- LLM call with retry ---
 
-def _write_debug_prompt(system_prompt, user_prompt):
-    """Write the full prompt to the debug file for troubleshooting."""
+def _write_debug_prompt(name, system_prompt, user_prompt):
+    """Write a named prompt to logs/debug/<name>.txt for troubleshooting."""
     try:
+        PROMPT_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        dest = PROMPT_DEBUG_DIR / f"{name}.txt"
         full_prompt = f"SYSTEM PROMPT\n{system_prompt}\n\n---\n\nUSER PROMPT\n{user_prompt}"
-        with open(PROMPT_DEBUG_FILE, "w", encoding="utf-8") as f:
-            f.write(full_prompt)
-        logging.info(f"Debug prompt written to {PROMPT_DEBUG_FILE}")
+        dest.write_text(full_prompt, encoding="utf-8")
+        logging.info("Debug prompt written to %s", dest)
     except Exception as e:
-        logging.warning(f"Could not write debug prompt file: {e}")
+        logging.warning("Could not write debug prompt file: %s", e)
 
 
 def _is_retryable_llm_error(error):
@@ -1283,6 +1290,54 @@ def _call_llm_with_retry(
     raise last_error
 
 
+def _call_glossary_llm_with_retry(provider, system_prompt, user_prompt, max_retries=3):
+    """Generate a glossary, preserving the last non-empty candidate if validation fails."""
+    last_error = None
+    last_candidate = ""
+    for attempt in range(max_retries):
+        if shutdown_requested:
+            raise InterruptedError("Shutdown requested before glossary LLM call")
+        try:
+            logging.info("Attempt %s/%s calling LLM...", attempt + 1, max_retries)
+            section = provider.process_document(
+                content="",
+                is_pdf=False,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=provider.get_preferred_max_tokens(),
+            )
+            if not section or not section.strip():
+                raise ValueError("LLM returned empty or whitespace-only response")
+            last_candidate = section
+            if _INLINE_FOOTNOTE_RE.search(section) and not _REFERENCES_HEADING_RE.search(section):
+                raise ValueError("Summary has inline footnote markers but is missing the ## References section")
+            validate_glossary_section(section)
+            logging.info("LLM call successful (received ~%s chars)", len(section))
+            return _normalise_generated_section(section, "## Glossary")
+        except Exception as error:
+            last_error = error
+            logging.error("Attempt %s failed — %s: %s", attempt + 1, provider.__class__.__name__, error)
+            if not _is_retryable_llm_error(error) or attempt == max_retries - 1:
+                break
+            wait_time = 2 ** (attempt + 1)
+            logging.info("Waiting %ss before retry...", wait_time)
+            if interruptible_sleep(wait_time):
+                raise InterruptedError("Shutdown requested during glossary retry wait")
+
+    if last_candidate.strip():
+        logging.warning(
+            "Glossary validation failed after %s attempt(s); preserving unvalidated glossary section: %s",
+            max_retries,
+            last_error or "Unknown validation failure",
+        )
+        try:
+            return _normalise_generated_section(last_candidate, "## Glossary")
+        except ValueError:
+            return f"## Glossary\n\n{last_candidate.strip()}"
+
+    raise Exception(str(last_error or "Unknown LLM failure"))
+
+
 # --- Post-processing ---
 
 def _normalise_generated_section(markdown, expected_heading):
@@ -1294,6 +1349,12 @@ def _normalise_generated_section(markdown, expected_heading):
     raise ValueError(f"Generated section is missing '{expected_heading}' heading")
 
 
+def _has_markdown_section(markdown, heading):
+    """Return whether a Markdown document contains an exact section heading."""
+    target = heading.strip().lower()
+    return any(line.strip().lower() == target for line in markdown.splitlines())
+
+
 def _non_empty_section_lines(section_markdown, heading):
     """Return non-empty lines after a generated section heading."""
     lines = [line.strip() for line in section_markdown.splitlines()]
@@ -1303,11 +1364,43 @@ def _non_empty_section_lines(section_markdown, heading):
 
 
 def _split_markdown_table_row(line):
-    """Return markdown table cells for a pipe-delimited row, or None."""
+    r"""Return markdown table cells for a pipe-delimited row, or None.
+
+    Handles | characters inside $...$, `...`, and \| escapes correctly.
+    """
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return None
-    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+    cells: list[str] = []
+    current: list[str] = []
+    escaped = False
+    in_code = False
+    in_math = False
+    for char in stripped[1:-1]:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char == "`" and not in_math:
+            in_code = not in_code
+            current.append(char)
+            continue
+        if char == "$" and not in_code:
+            in_math = not in_math
+            current.append(char)
+            continue
+        if char == "|" and not in_code and not in_math:
+            cells.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    cells.append("".join(current).strip())
+    return cells
 
 
 def _is_markdown_separator_row(cells):
@@ -1345,7 +1438,7 @@ def _render_tags_section(proper_tags, science_tags):
     return "\n".join(lines).rstrip()
 
 
-def normalise_tags_section(section_markdown, available_keywords=None):
+def normalise_tags_section(section_markdown, available_keywords=None, *, reject_unknown_science_tags=False):
     """Return a canonical Tags section after classifying candidate tags."""
     section = _normalise_generated_section(section_markdown, "## Tags")
     tag_lines = _non_empty_section_lines(section, "## Tags")
@@ -1368,10 +1461,10 @@ def normalise_tags_section(section_markdown, available_keywords=None):
                 _append_unique_tag(proper_tags, tag)
 
     if dropped_science_tags:
-        logging.warning(
-            "Dropped science tags outside supplied keyword list: %s",
-            ", ".join(dropped_science_tags),
-        )
+        message = "Science tags outside supplied keyword list: " + ", ".join(dropped_science_tags)
+        if reject_unknown_science_tags:
+            raise ValueError(message)
+        logging.warning("Dropped %s", message[0].lower() + message[1:])
     if len(proper_tags) > 5:
         logging.warning("Truncated proper-noun tags to 5 entries")
     if len(science_tags) > 5:
@@ -1409,9 +1502,13 @@ def validate_glossary_section(section_markdown):
         raise ValueError(f"Glossary table must contain no more than {GLOSSARY_MAX_TERMS} terms")
 
 
-def validate_tags_section(section_markdown, available_keywords=None):
+def validate_tags_section(section_markdown, available_keywords=None, *, reject_unknown_science_tags=False):
     """Validate generated tag markdown."""
-    section = normalise_tags_section(section_markdown, available_keywords)
+    section = normalise_tags_section(
+        section_markdown,
+        available_keywords,
+        reject_unknown_science_tags=reject_unknown_science_tags,
+    )
     tag_lines = _non_empty_section_lines(section, "## Tags")
     for line in tag_lines:
         tags = line.split()
@@ -1458,6 +1555,10 @@ def build_tags_prompt(summary_text, keywords):
         "models, software, or named catalogues from the summary only; no more than 5.\n"
         "- Second hashtag line: choose no more than 5 science-area hashtags from the "
         "available keyword list only.\n"
+        "- Copy science-area hashtags exactly as written in the list; do not invent, "
+        "rename, shorten, pluralise, or create aliases for science tags.\n"
+        "- If the best conceptual science tag is absent, choose the closest listed tag "
+        "that is justified by the summary, or omit it.\n"
         "- Use spaces between hashtags, not commas, bullets, or labels.\n"
         "- If fewer than 5 tags are justified, use fewer.\n"
         "- Do not include introductory text, commentary, or any other section.\n\n"
@@ -1473,20 +1574,20 @@ def build_tags_prompt(summary_text, keywords):
 def generate_glossary(summary_text, provider):
     """Generate and validate a glossary section from the completed summary."""
     system_prompt, user_prompt = build_glossary_prompt(summary_text)
-    section = _call_llm_with_retry(
-        provider,
-        summary_text,
-        False,
-        system_prompt,
-        user_prompt,
-        response_validator=validate_glossary_section,
-    )
-    return _normalise_generated_section(section, "## Glossary")
+    _write_debug_prompt("paper-glossary", system_prompt, user_prompt)
+    try:
+        return _call_glossary_llm_with_retry(provider, system_prompt, user_prompt)
+    except InterruptedError:
+        raise
+    except Exception as error:
+        logging.warning("Glossary generation failed; skipping section: %s", error)
+        return ""
 
 
 def generate_tags(summary_text, keywords, provider):
     """Generate a best-effort tags section from the completed summary."""
     system_prompt, user_prompt = build_tags_prompt(summary_text, keywords)
+    _write_debug_prompt("paper-tags", system_prompt, user_prompt)
     try:
         section = _call_llm_with_retry(
             provider,
@@ -1494,8 +1595,17 @@ def generate_tags(summary_text, keywords, provider):
             False,
             system_prompt,
             user_prompt,
+            response_validator=lambda response: validate_tags_section(
+                response,
+                keywords,
+                reject_unknown_science_tags=True,
+            ),
         )
-        return normalise_tags_section(section, available_keywords=keywords)
+        return normalise_tags_section(
+            section,
+            available_keywords=keywords,
+            reject_unknown_science_tags=True,
+        )
     except Exception as error:
         logging.warning("Tag generation failed; using fallback tags: %s", error)
         return build_fallback_tags(summary_text, keywords)
@@ -1916,7 +2026,7 @@ def process_file(file_path, keywords, template, provider, worked_example=""):
             prompt_info += f" Paper text: {len(paper_text)} chars."
         logging.info(prompt_info)
 
-        _write_debug_prompt(system_prompt, user_prompt)
+        _write_debug_prompt("paper-summary", system_prompt, user_prompt)
 
         # 3. Call LLM with retry
         summary = _call_llm_with_retry(provider, content, is_pdf, system_prompt, user_prompt)
@@ -1932,9 +2042,15 @@ def process_file(file_path, keywords, template, provider, worked_example=""):
 
         tags_section = generate_tags(summary, filtered_keywords, provider)
 
-        glossary_section = generate_glossary(summary, provider)
-        summary = insert_section(summary, glossary_section)
-        summary = insert_section(summary, tags_section)
+        if _has_markdown_section(summary, "## Glossary"):
+            logging.info("Summary already includes a Glossary section; skipping generated glossary.")
+            glossary_section = ""
+        else:
+            glossary_section = generate_glossary(summary, provider)
+        if glossary_section:
+            summary = insert_section(summary, glossary_section)
+        if tags_section:
+            summary = insert_section(summary, tags_section)
         validate_summary(summary, source_metadata=source_metadata)
 
         # 5. Extract metadata once, use for both save and move
